@@ -1,0 +1,126 @@
+{
+  "pf2e-vibemodulerp": {
+    "reloadRequired": "Requires Reload",
+    "dialog": {
+      "title": "Template Helper",
+      "enemies": "Enemies",
+      "allies": "Allies",
+      "all": "Both",
+      "self": "Include Self",
+      "neutral": "Include Neutral",
+      "dismiss": "Remove Template",
+      "applyEffects": "Auto-Apply Spell Effects",
+      "ok": "Target",
+      "cancel": "Cancel"
+    },
+    "autoApply": {
+      "notFound": "No item named \"{name}\" was found in your compendiums. The spell effect was not applied.",
+      "applied": "Applied \"{name}\" to {count} target(s).",
+      "gmApplied": "Applied \"{name}\" to {count} target(s) ({gm} of them through the GM).",
+      "failed": "Could not apply \"{name}\" to {count} target(s). Check the console (F12) for details.",
+      "noGm": "No GM is connected, so \"{name}\" could not be applied to {count} target(s)."
+    },
+    "notify": {
+      "toolbeltDisabled": "PF2e VibeModuleRP has taken over the template helper dialog; pf2e-toolbelt's built-in 'Template Helper' has been disabled.",
+      "applyFailed": "PF2e VibeModuleRP could not apply the spell effects. Check the console (F12) for details."
+    },
+    "shieldedArm": {
+      "notify": {
+        "sourceMissing": "PF2e VibeModuleRP: the Spell Effect: Shielded Arm compendium entry was not found, so the effect could not be applied.",
+        "applied": "Applied Spell Effect: Shielded Arm to {name}."
+      }
+    },
+    "spellShield": {
+      "notify": {
+        "destroyed": "{actor}'s {shield} shattered and the spell effect ended."
+      }
+    },
+    "hide-cursor": {
+      "notify": {
+        "masterOff": "Improved invisibility is disabled by the master switch in the module settings.",
+        "hidden": "You are now invisible to other players. Note: the GM can still see your cursor and movement.",
+        "visible": "You are now visible to other players."
+      }
+    },
+    "settings": {
+      "categories": {
+        "template-effects": "Template Effects settings",
+        "shielded-arm": "Shielded Arm settings",
+        "hide-cursor": "Invisibility settings",
+        "invisible-token": "Invisibility settings",
+        "spell-shield": "Spell Shield settings",
+        "attribute-roll": "Attribute Roll settings",
+        "popout": "Popout settings",
+        "volume-persistence": "Volume Persistence settings"
+      },
+      "invisible-token": {
+        "enabled": {
+          "name": "Enable Improved Invisibility Effects",
+          "hint": "Master switch for the improved invisibility features. When off, the 'Enable Player Token Invisibility Toggle' and 'Hide Token on Invisible Condition' options below have no effect."
+        },
+        "autoHide": {
+          "name": "Hide Token on Invisible Condition",
+          "hint": "When an actor gains the Invisible condition, hide its tokens (players can no longer see them; the GM still can). Tokens are automatically shown again when the condition ends."
+        }
+      },
+      "hide-cursor": {
+        "enabled": {
+          "name": "Enable Player Token Invisibility Toggle",
+          "hint": "Allows each player to toggle whether their canvas cursor and movement previews are hidden from other players. The GM always sees everything regardless of this toggle."
+        },
+        "keybinding": {
+          "name": "Toggle Own Invisibility",
+          "hint": "Hide or show your cursor and token movement previews to other players. Default: F9"
+        },
+        "hidden": {
+          "name": "Invisible to Others",
+          "hint": "Managed automatically by the toggle, keybinding, /toggleinvisibility command, or macro."
+        }
+      },
+      "template-effects": {
+        "enabled": {
+          "name": "Enable Template Effects",
+          "hint": "Show a targeting dialog when placing spell area templates and auto-apply the matching spell effect item."
+        },
+        "apply": {
+          "name": "Auto-Apply Spell Effects (initial default)",
+          "hint": "Only used as the initial value of the 'Auto-Apply Spell Effects' checkbox the very first time the dialog is opened. Afterwards the dialog remembers the last value you used."
+        },
+        "replaceToolbelt": {
+          "name": "Replace pf2e-toolbelt's Template Helper",
+          "hint": "Disables the built-in template dialog of the pf2e-toolbelt module so that only this dialog runs. If you ever disable this module, re-enable the pf2e-toolbelt setting there."
+        }
+      },
+      "shielded-arm": {
+        "enabled": {
+          "name": "Enable Shielded Arm Effect",
+          "hint": "Adds a link to the 'Spell Effect: Shielded Arm' compendium item in Shielded Arm spell descriptions and auto-applies it when the spell is cast."
+        }
+      },
+      "spell-shield-tracker": {
+        "enabled": {
+          "name": "Enable Spell Shield HP Tracking",
+          "hint": "Tracks the HP of spell-effect shields (such as Fire Shield), displays the current HP in the character sheet, lets blocking damage reduce it, and ends the effect when the shield is destroyed."
+        }
+      },
+      "attribute-roll": {
+        "enabled": {
+          "name": "Enable Direct Attribute Rolls",
+          "hint": "Adds a d20 button to each attribute on character sheets. Click to roll that attribute's check (Shift-click for the check dialog with fortune/misfortune and bonuses, Ctrl/Cmd-click for a blind roll when GM)."
+        }
+      },
+      "popout-initiative": {
+        "enabled": {
+          "name": "Popout Initiative Link Sync",
+          "hint": "Keeps the initiative roll button instantly in sync on character sheets opened in a popout window, where the PF2e system's own sync is bypassed: enabled as soon as an encounter starts, disabled when it ends, shows 'already rolled' immediately once initiative is rolled, and enables right away when a character is added to an active encounter."
+        }
+      },
+      "volume-persistence": {
+        "enabled": {
+          "name": "Enable Volume Persistence",
+          "hint": "Remembers the Music, Environment, and Interface volume sliders from the Playlists sidebar across sessions, even when browser storage is cleared or the server address changes (e.g. rotating Cloudflare tunnel links). Each user keeps their own volumes."
+        }
+      }
+    }
+  }
+}

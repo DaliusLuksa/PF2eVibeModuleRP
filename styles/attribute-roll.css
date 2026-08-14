@@ -1,0 +1,36 @@
+/* Direct attribute-roll buttons on the pf2e character sheet.
+   The dice sits at the bottom of each attribute cell, below the modifier
+   number and the full attribute word (the user's requested spot). */
+.actor.sheet.character section.window-content .crb-style .sheet-body .sheet-content > .tab.active.character .subsection.attributes ul li.attribute button.vibe-attribute-roll {
+	align-items: center;
+	background: transparent;
+	border: none;
+	color: var(--text-dark);
+	cursor: pointer;
+	display: flex;
+	font-size: var(--font-size-17);
+	justify-content: center;
+	line-height: 1;
+	margin: 0;
+	padding: var(--space-1) 0;
+	transition: color 0.2s ease-in-out;
+	width: 100%;
+}
+
+.actor.sheet.character section.window-content .crb-style .sheet-body .sheet-content > .tab.active.character .subsection.attributes ul li.attribute button.vibe-attribute-roll:hover {
+	color: var(--color-pf-primary);
+	text-shadow: none;
+}
+
+.actor.sheet.character section.window-content .crb-style .sheet-body .sheet-content > .tab.active.character .subsection.attributes ul li.attribute button.vibe-attribute-roll:hover i {
+	animation: vibe-attribute-roll-spin 2s infinite linear;
+}
+
+@keyframes vibe-attribute-roll-spin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(359deg);
+	}
+}
