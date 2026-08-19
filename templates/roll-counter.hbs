@@ -1,0 +1,65 @@
+<section class="vibe-roll-counter">
+    <div class="rc-toolbar">
+        <select class="rc-user-select" data-roll-counter-user>
+            <option value="">{{@root.i18n 'allPlayers'}}</option>
+            {{#each users}}
+            <option value="{{id}}"{{#if (eq id @root.selectedUserId)}} selected{{/if}}>{{name}}</option>
+            {{/each}}
+        </select>
+        <select class="rc-session-select" data-roll-counter-session>
+            <option value=""{{#unless @root.selectedDate}} selected{{/unless}}>{{@root.currentSessionLabel}}</option>
+            {{#each sessions}}
+            <option value="{{day}}"{{#if (eq day @root.selectedDate)}} selected{{/if}}>{{label}}</option>
+            {{/each}}
+        </select>
+    </div>
+
+    <nav class="tabs roll-counter-tabs" data-group="categories">
+        {{#each tabs}}
+        <button type="button" data-action="tab" data-tab="{{id}}" data-group="categories" class="item{{#if active}} active{{/if}}">{{label}}</button>
+        {{/each}}
+    </nav>
+
+    {{#each tabs}}
+    <section class="tab roll-counter-pane{{#if active}} active{{/if}}" data-group="categories" data-tab="{{id}}">
+        {{#if charts}}
+        <div class="rc-summary">{{@root.i18n 'rollsLabel'}}: <strong>{{rolls}}</strong></div>
+        <div class="rc-charts">
+            {{#each charts}}
+            <div class="rc-chart">
+                <header class="rc-chart-header">
+                    <span class="rc-chart-name">{{name}}</span>
+                    <span class="rc-chart-total">{{@root.i18n 'total'}}: {{total}}</span>
+                </header>
+                <div class="rc-chart-body">
+                    <div class="rc-y-axis">
+                        <span>{{max}}</span>
+                        {{#if mid}}<span>{{mid}}</span>{{/if}}
+                        <span>0</span>
+                    </div>
+                    <div class="rc-plot">
+                        {{#each bars}}
+                        <div class="rc-bar {{highlight}}" style="left: {{left}}%; height: {{px}}px;" data-tooltip="{{v}}: {{n}}">
+                            {{#if n}}<span class="rc-bar-count">{{n}}</span>{{/if}}
+                        </div>
+                        {{/each}}
+                    </div>
+                </div>
+                <div class="rc-x-axis">
+                    {{#each xLabels}}<span>{{this}}</span>{{/each}}
+                </div>
+            </div>
+            {{/each}}
+        </div>
+        {{else}}
+        <p class="rc-empty">{{@root.i18n 'empty'}}</p>
+        {{/if}}
+    </section>
+    {{/each}}
+
+    {{#if showClear}}
+    <footer class="rc-footer">
+        <button type="button" data-action="clear" data-tooltip="{{@root.i18n 'clearHint'}}">{{@root.i18n 'clear'}}</button>
+    </footer>
+    {{/if}}
+</section>

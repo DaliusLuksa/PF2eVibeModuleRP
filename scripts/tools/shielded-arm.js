@@ -4,6 +4,10 @@ const SYSTEM_ID = "pf2e";
 const EFFECT_UUID = "Compendium.pf2e-vibemodulerp.shielded-arm-effect.Item.uQx4ShlddArm0001";
 const EFFECT_LINK = `<p>@UUID[${EFFECT_UUID}]{Spell Effect: Shielded Arm}</p>`;
 const SPELL_NAME = "Shielded Arm";
+const SOCKET_EVENT = `module.${Manager.id}`;
+const SOCKET_ACTION_REQUEST = "shieldedArmApplyRequest";
+const SOCKET_ACTION_RESULT = "shieldedArmApplyResult";
+const GM_RESPONSE_TIMEOUT_MS = 20000;
 
 /* Canonical effect data. Mirrors the compendium entry in packs/shielded-arm-effect.db and is injected
    at apply-time so the applied effect is correct even if the pack copy is stale. */
@@ -57,12 +61,14 @@ const PACK_RULES = [
 const PACK_DESCRIPTION =
 	`<p>The effect of the <em>Shielded Arm</em> spell. Reinforcing veins of ore run through the target's arm, letting it ward off blows with its bare skin.</p>` +
 	`<p>While the spell is active, the arm counts as a raised shield, granting a <strong>+2 circumstance bonus to AC</strong>. The target can Shield Block with it, reducing damage as if it had a shield with <strong>Hardness 4</strong> and <strong>15 Hit Points</strong>. This shield has no Broken Threshold, and the spell ends if the shield's Hit Points are expended.</p>` +
-	`<p><strong>Heightened (+2)</strong> The Hardness increases by 4, and the Hit Points increase by 15.</p>`;
-
-export class ShieldedArmTool {
+	`<p><strong>Heightened (+2)</strong> The Hardness increases by 4, and the Hit Points increase by 15.</p>`;	export class ShieldedArmTool {
 	static id = "shielded-arm";
 	static category = "shielded-arm";
 	static enabledDefault = true;
+
+	/** Pending GM effect-apply requests, keyed by request id. */
+	static _pendingGmRequests = new Map();
+
 
 	/* -------------------------------------------- */
 	/*  Lifecycle                                   */
@@ -72,6 +78,7 @@ export class ShieldedArmTool {
 		this._patchExistingSpells();
 		Hooks.on("preCreateItem", this._onPreCreateItem.bind(this));
 		Hooks.on("createChatMessage", this._onCreateChatMessage.bind(this));
+		game.socket.on(SOCKET_EVENT, this._onSocketMessage.bind(this));
 		console.debug(`${Manager.id} | shielded-arm hooks installed`);
 	}
 
@@ -199,7 +206,28 @@ export class ShieldedArmTool {
 				return;
 			}
 
-			const [created] = await targetActor.createEmbeddedDocuments("Item", [data]);
+			// Creating an item inside an actor requires OWNER permission on that actor
+			// (core item #canCreate: embedded items test OWNER on the parent). If the
+			// caster doesn't own the target, route the creation through a connected GM
+			// over the module socket (GMs have universal ownership).
+			let created = null;
+			if (targetActor.testUserPermission(game.user, "OWNER")) {
+				[created] = await targetActor.createEmbeddedDocuments("Item", [data]);
+			} else {
+				const result = await this._requestGmApply(targetActor.uuid, data);
+				if (result.noGm) {
+					ui.notifications.error(
+						Manager.localize("shieldedArm.notify.noGm", { name: targetActor.name })
+					);
+					return;
+				}
+				if (result.failed > 0) {
+					ui.notifications.error(
+						Manager.localize("shieldedArm.notify.failed", { name: targetActor.name })
+					);
+					return;
+				}
+			}
 			ui.notifications.info(
 				Manager.localize("shieldedArm.notify.applied", { name: targetActor.name })
 			);
@@ -210,5 +238,91 @@ export class ShieldedArmTool {
 		} catch (error) {
 			console.error(`${Manager.id} | shielded-arm auto-apply failed`, error);
 		}
+	}
+
+	/* -------------------------------------------- */
+	/*  GM routing via module socket                */
+	/* -------------------------------------------- */
+
+	static _onSocketMessage(data, userId) {
+		try {
+			if (!data?.action) return;
+			if (data.action === SOCKET_ACTION_REQUEST) {
+				if (!game.user.isGM) return;
+				this._handleGmApplyRequest(data, userId).catch((error) =>
+					console.error(`${Manager.id} | GM effect request failed`, error)
+				);
+			} else if (data.action === SOCKET_ACTION_RESULT) {
+				this._handleGmApplyResult(data);
+			}
+		} catch (error) {
+			console.error(`${Manager.id} | shielded-arm socket handler failed`, error);
+		}
+	}
+
+	/**
+	 * Ask the first connected GM to create the effect on an actor the requesting
+	 * user does not own. Resolves once the GM replies or times out.
+	 */
+	static _requestGmApply(actorUuid, source) {
+		return new Promise((resolve) => {
+			const gm = game.users.find((user) => user.isGM && user.active);
+			if (!gm) {
+				resolve({ applied: 0, failed: 1, noGm: true });
+				return;
+			}
+			const requestId = foundry.utils.randomID();
+			const timer = setTimeout(() => {
+				this._pendingGmRequests.delete(requestId);
+				resolve({ applied: 0, failed: 1, timeout: true });
+			}, GM_RESPONSE_TIMEOUT_MS);
+			this._pendingGmRequests.set(requestId, { resolve, timer });
+			// source is a plain object (effect.toObject() + primitive edits), so it
+			// survives the socket — never send live Document objects.
+			game.socket.emit(
+				SOCKET_EVENT,
+				{ action: SOCKET_ACTION_REQUEST, requestId, actorUuid, source },
+				{ recipients: [gm.id] }
+			);
+		});
+	}
+
+	/**
+	 * GM-only: create the requested effect (GMs have universal ownership, so the
+	 * server accepts it) and report the outcome back to the requester.
+	 */
+	static async _handleGmApplyRequest(data, userId) {
+		const { requestId, actorUuid, source } = data;
+		if (!requestId || !actorUuid || !source) return;
+		let applied = 0;
+		let failed = 0;
+		try {
+			const actor = await fromUuid(actorUuid);
+			if (!actor) {
+				failed = 1;
+			} else {
+				await actor.createEmbeddedDocuments("Item", [source]);
+				applied = 1;
+			}
+		} catch (error) {
+			failed = 1;
+			console.warn(`${Manager.id} | GM could not apply the effect to ${actorUuid}`, error);
+		}
+		game.socket.emit(
+			SOCKET_EVENT,
+			{ action: SOCKET_ACTION_RESULT, requestId, applied, failed },
+			{ recipients: [userId] }
+		);
+	}
+
+	/**
+	 * Resolve a pending request when the GM reports back.
+	 */
+	static _handleGmApplyResult(data) {
+		const pending = this._pendingGmRequests.get(data?.requestId);
+		if (!pending) return;
+		clearTimeout(pending.timer);
+		this._pendingGmRequests.delete(data.requestId);
+		pending.resolve({ applied: data.applied ?? 0, failed: data.failed ?? 0 });
 	}
 }

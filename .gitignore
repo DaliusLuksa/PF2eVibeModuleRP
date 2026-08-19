@@ -1,6 +1,6 @@
-# Machine-local LevelDB cache of the compendium pack - Foundry rebuilds it
-# from packs/*.db on first launch. Never commit it.
-packs/shielded-arm-effect/
+# Machine-local LevelDB caches of the compendium packs - Foundry rebuilds
+# them from packs/*.db on first launch. Never commit them.
+packs/*/
 
 # Release zip built by build-module.bat - never commit it.
 /module.zip

@@ -1,0 +1,27 @@
+/* Sustain Reminder - combat tracker badge */
+li.combatant.vibe-sustained {
+  background: rgba(240, 193, 91, 0.12);
+}
+
+.vibe-sustain-badge {
+  color: #f0c15b;
+  font-size: 0.7rem;
+  margin-inline-start: 0.4em;
+  filter: drop-shadow(0 0 2px rgba(240, 193, 91, 0.9));
+  cursor: help;
+}
+
+/* Sustain Reminder - chat message */
+.vibe-sustain-reminder {
+  padding: 0.25rem 0.5rem;
+}
+
+.vibe-sustain-reminder p {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+}
+
+.vibe-sustain-reminder ul {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}

@@ -1,0 +1,45 @@
+<section class="vibe-action-tracker">
+    {{#if active}}
+    <header class="at-header">
+        {{#if combatantImg}}<img class="at-portrait" src="{{combatantImg}}" alt="{{combatantName}}">{{/if}}
+        <div class="at-meta">
+            <h3 class="at-name">{{combatantName}}</h3>
+            <span class="at-round">{{@root.i18n 'round'}} {{round}}</span>
+        </div>
+    </header>
+
+    <ol class="at-log">
+        {{#each entries}}
+        <li class="at-entry">
+            <span class="at-cost">{{cost}}</span>
+            {{#if icon.img}}<img class="at-icon at-icon-img" src="{{icon.img}}" alt="" data-tooltip="{{cost}} {{@root.i18n 'actions'}}">{{else}}<i class="at-icon fa-solid {{icon.fa}}" data-tooltip="{{cost}} {{@root.i18n 'actions'}}"></i>{{/if}}
+            <span class="at-name">{{name}}</span>
+        </li>
+        {{else}}
+        <li class="at-empty">{{@root.i18n 'empty'}}</li>
+        {{/each}}
+    </ol>
+
+    <footer class="at-footer">
+        <div class="at-meter">
+            <span class="at-used">{{used}}</span>
+            <span class="at-sep">/</span>
+            <span class="at-max">{{max}}</span>
+        </div>
+        <div class="at-remaining">{{@root.i18n 'remaining'}} {{remaining}}</div>
+        {{#if isGM}}
+        <div class="at-controls">
+            <button type="button" data-action="spend" data-cost="1" data-tooltip="{{@root.i18n 'spend'}} +1">+1</button>
+            <button type="button" data-action="spend" data-cost="2" data-tooltip="{{@root.i18n 'spend'}} +2">+2</button>
+            <button type="button" data-action="spend" data-cost="3" data-tooltip="{{@root.i18n 'spend'}} +3">+3</button>
+            <button type="button" data-action="free" data-tooltip="{{@root.i18n 'free'}}">F</button>
+            <button type="button" data-action="reaction" data-tooltip="{{@root.i18n 'reaction'}}">R</button>
+            <button type="button" data-action="undo" data-tooltip="{{@root.i18n 'undo'}}"><i class="fa-solid fa-rotate-left"></i></button>
+            <button type="button" data-action="newTurn" data-tooltip="{{@root.i18n 'newTurn'}}"><i class="fa-solid fa-forward"></i></button>
+        </div>
+        {{/if}}
+    </footer>
+    {{else}}
+    <p class="at-inactive">{{@root.i18n 'inactive'}}</p>
+    {{/if}}
+</section>

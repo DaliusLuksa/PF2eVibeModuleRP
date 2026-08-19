@@ -24,10 +24,55 @@
       "toolbeltDisabled": "PF2e VibeModuleRP has taken over the template helper dialog; pf2e-toolbelt's built-in 'Template Helper' has been disabled.",
       "applyFailed": "PF2e VibeModuleRP could not apply the spell effects. Check the console (F12) for details."
     },
+    "sustain": {
+      "reminder": "{caster} - remember to Sustain:",
+      "on": "(on {target})",
+      "badgeTooltip": "Has active sustained spells to maintain"
+    },
+    "actionTracker": {
+      "title": "Action Tracker",
+      "round": "Round",
+      "empty": "Nothing recorded this turn yet.",
+      "remaining": "actions remaining",
+      "actions": "actions",
+      "inactive": "No active combat.",
+      "spend": "Spend",
+      "free": "Free Action",
+      "reaction": "Reaction",
+      "undo": "Undo last entry",
+      "newTurn": "Reset for new turn",
+      "manual": "Manual adjustment",
+      "toggleTooltip": "Toggle the Action Tracker window",
+      "keybindName": "Open the Action Tracker window",
+      "keybindHint": "Reopens the Action Tracker window if it was closed."
+    },
+    "rollCounter": {
+      "title": "Roll Counter",
+      "tabAll": "All",
+      "tabOutside": "Outside Combat",
+      "tabCombat": "In Combat",
+      "tabNonD20": "Non-D20",
+      "rollsLabel": "Rolls",
+      "allPlayers": "All Players",
+      "currentSession": "Current Session ({date})",
+      "session": "{day} session",
+      "total": "Total",
+      "die": "Die",
+      "count": "Count",
+      "empty": "No rolls recorded in this category yet.",
+      "clear": "Clear All Records",
+      "clearHint": "Delete every recorded roll from all categories. Cannot be undone.",
+      "clearTitle": "Clear All Records?",
+      "clearConfirm": "This will permanently delete {count} recorded roll(s) from every category and player. This cannot be undone.",
+      "keybindName": "Open the Roll Counter window",
+      "keybindHint": "Reopens the Roll Counter window if it was closed (default: F8). Counts every active die result by the player who rolled it: d20 rolls are split into all rolls, rolls outside combat, and rolls during combat, and every other roll (weapon damage dice, etc.) is shown in the Non-D20 tab on the same 1-20 axis."
+    },
     "shieldedArm": {
       "notify": {
         "sourceMissing": "PF2e VibeModuleRP: the Spell Effect: Shielded Arm compendium entry was not found, so the effect could not be applied.",
-        "applied": "Applied Spell Effect: Shielded Arm to {name}."
+        "applied": "Applied Spell Effect: Shielded Arm to {name}.",
+        "noGm": "PF2e VibeModuleRP: no GM is connected, so Spell Effect: Shielded Arm could not be applied to {name}.",
+        "failed": "PF2e VibeModuleRP: could not apply Spell Effect: Shielded Arm to {name}. Check the console (F12) for details."
       }
     },
     "spellShield": {
@@ -46,12 +91,67 @@
       "categories": {
         "template-effects": "Template Effects settings",
         "shielded-arm": "Shielded Arm settings",
+        "calm-effects": "Calm Effects settings",
         "hide-cursor": "Invisibility settings",
         "invisible-token": "Invisibility settings",
         "spell-shield": "Spell Shield settings",
         "attribute-roll": "Attribute Roll settings",
         "popout": "Popout settings",
-        "volume-persistence": "Volume Persistence settings"
+        "volume-persistence": "Volume Persistence settings",
+        "sustain-reminder": "Sustain Reminder settings",
+        "effect-animation": "Effect Animation settings",
+        "action-tracker": "Action Tracker settings",
+        "roll-counter": "Roll Counter settings"
+      },
+      "action-tracker": {
+        "enabled": {
+          "name": "Enable Action Tracker",
+          "hint": "Shows an in-Foundry window while a combat is running with the current combatant's name, the actions they have used this turn. The GM's client automatically counts the current actor's actions from the chat (spell casting times, action/feat costs, weapon Strikes, and skill checks) and syncs the window to all players. GM-only buttons let you correct the count manually."
+        },
+        "actionsPerTurn": {
+          "name": "Actions per Turn",
+          "hint": "How many actions each combatant is assumed to have per turn. Used only for the 'actions remaining' display."
+        },
+        "state": {
+          "name": "Last known state",
+          "hint": "Internal: the GM's last broadcast Action Tracker state, restored when a client joins or reloads mid-combat."
+        }
+      },
+      "roll-counter": {
+        "enabled": {
+          "name": "Enable Roll Counter",
+          "hint": "Counts every d20 roll made in the world by the player who actually made it (GM rolls included), recorded with its natural result, whether it happened inside a combat, and a timestamp. Open the window with F8: pick a player from the dropdown to see their 1-20 bar chart across three tabs - all rolls, rolls outside combat, and rolls during combat. Records are saved automatically and survive reloads."
+        },
+        "showClear": {
+          "name": "Show Clear Recorded Rolls button",
+          "hint": "Displays a 'Clear All Records' button at the bottom of the Roll Counter window (GM only, with a confirmation dialog). Off by default so records can't be wiped by accident."
+        },
+        "state": {
+          "name": "Recorded rolls",
+          "hint": "Internal: the persisted log of every counted roll. Written by the GM's client and restored on reload."
+        }
+      },
+      "sustain-reminder": {
+        "enabled": {
+          "name": "Enable Sustain Reminder",
+          "hint": "Reminds players to Sustain their active sustained spells (such as Flaming Sphere or Summon spells) at the start of their turn. Only affects player characters, and only spells whose effect carries the system's origin data (applied via a targeted cast or by dragging the effect from the chat card)."
+        },
+        "chatMessage": {
+          "name": "Chat Reminder at Turn Start",
+          "hint": "Posts a message to the chat (visible to everyone) when a player character's turn begins while they have active sustained effects."
+        },
+        "trackerBadge": {
+          "name": "Combat Tracker Badge",
+          "hint": "Shows a small sustain icon next to combatants in the combat tracker while they have active sustained effects. The GM computes and broadcasts the badge state, so it appears for every player."
+        },
+        "patchEffects": {
+          "name": "Auto-enable Sustained Flag on Applied Effects",
+          "hint": "When an effect for a sustained spell is applied to any actor (dragged from chat or a compendium, or auto-applied), sets the effect's 'Sustained' flag automatically so the reminder can detect it. The system's own effect items (such as Spell Effect: Leaden Steps) are missing this flag; this patches the copies without touching the locked originals."
+        },
+        "extraSpells": {
+          "name": "Extra Sustained Spell Names",
+          "hint": "Comma-separated list of spell names whose effects should also get the Sustained flag, for spells the automatic system scan can't find (homebrew, or non-sustained spells you still want tracked). Example: Calm, My Custom Spell"
+        }
       },
       "invisible-token": {
         "enabled": {
@@ -97,6 +197,12 @@
           "hint": "Adds a link to the 'Spell Effect: Shielded Arm' compendium item in Shielded Arm spell descriptions and auto-applies it when the spell is cast."
         }
       },
+      "calm-effects": {
+        "enabled": {
+          "name": "Enable Calm Spell Effect Links",
+          "hint": "Adds quick links to the 'Spell Effect: Calm (Minor)' and 'Spell Effect: Calm (Absolute)' compendium items in Calm spell descriptions, so each save-result tier can be applied and tracked."
+        }
+      },
       "spell-shield-tracker": {
         "enabled": {
           "name": "Enable Spell Shield HP Tracking",
@@ -115,10 +221,22 @@
           "hint": "Keeps the initiative roll button instantly in sync on character sheets opened in a popout window, where the PF2e system's own sync is bypassed: enabled as soon as an encounter starts, disabled when it ends, shows 'already rolled' immediately once initiative is rolled, and enables right away when a character is added to an active encounter."
         }
       },
+      "popout-sortable-repair": {
+        "enabled": {
+          "name": "Popout Drag-Drop Repair",
+          "hint": "Repairs PF2e inventory drag-and-drop (dragging items into containers/backpacks, reordering) inside popped-out actor sheets. Popping a sheet out makes the PF2e system destroy its sortable instances; this tool re-renders the sheet in the popout window so dragging works again."
+        }
+      },
       "volume-persistence": {
         "enabled": {
           "name": "Enable Volume Persistence",
           "hint": "Remembers the Music, Environment, and Interface volume sliders from the Playlists sidebar across sessions, even when browser storage is cleared or the server address changes (e.g. rotating Cloudflare tunnel links). Each user keeps their own volumes."
+        }
+      },
+      "effect-animation": {
+        "enabled": {
+          "name": "Enable Effect-Apply Animations",
+          "hint": "Plays an Automated Animations sequence when a \"Spell Effect: <spell>\" item lands on an actor. Damaging spells and spells with their own AA menu entry are skipped (AA already animates them); for everything else the spell's description is matched against AA's menus the same way the AAFA module used to (e.g. Leaden Steps plays the Slow animation). Requires the Automated Animations module."
         }
       }
     }
