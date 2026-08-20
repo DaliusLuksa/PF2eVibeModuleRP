@@ -10,11 +10,16 @@ const MODULE_ROOT = "modules/pf2e-vibemodulerp";
  * Opens an in-Foundry window automatically when a combat is started and shows
  * who is acting, how many actions they have used, and what they did so far.
  * The GM's client watches chat messages: it resolves each action's cost (spell
- * casting time, action/feat `actionCost`, weapon Strike, plain skill checks),
- * picks a per-action icon (spell artwork or a category default), and broadcasts
+ * casting time, action/feat `actionCost`, "Apply Effect"/self-effect cards,
+ * consumable "Use" messages, weapon Strike, plain skill checks),
+ * and counts token movement from the Foundry `moveToken` hook (the terrain-aware
+ * measured cost pf2e's token ruler already computes), picks a per-action icon
+ * (spell artwork or a category default), and broadcasts
  * the whole state to all clients over the module socket, so the same window
  * (read-only on player clients, with manual GM-only correction buttons) stays in
  * sync for everyone. State resets automatically on every combat turn change.
+ * Consecutive token moves merge into a single cumulative "Move (N ft)" entry;
+ * any non-move action taken in between ends the chain, so the next move logs fresh.
  *
  * Known limitation (accepted): casting the same spell twice in one turn is
  * counted once (the spell card, its attack roll and its damage roll all share
@@ -39,19 +44,23 @@ export class ActionTrackerTool {
 		round: 0,
 		max: 3,
 		used: 0,
-		entries: []
+		entries: [],
+		// Consecutive-move chain: cumulative cost/distance/actions while the
+		// combatant only moves, so repeated moves merge into one entry. Reset on
+		// turn change and whenever any non-move action is logged.
+		movement: null
 	};
 
 	/** Spell item uuids already counted this turn (dedupe; reset on turn change). */
 	static _countedSpellUuids = new Set();
 	static _window = null;
 
-	/** Chat message context types that never cost actions. */
+	/** Chat message context types that never cost actions. `self-effect` is NOT
+	 * here: it is handled explicitly in `_onCreateChatMessage` (Apply Effect). */
 	static _skipTypes = new Set([
 		"saving-throw",
 		"damage-roll",
 		"flat-check",
-		"self-effect",
 		"initiative",
 		"counteract-check"
 	]);
@@ -75,6 +84,7 @@ export class ActionTrackerTool {
 		Hooks.on("updateCombat", this._onCombatUpdate.bind(this));
 		Hooks.on("deleteCombat", this._onCombatDeleted.bind(this));
 		Hooks.on("createChatMessage", this._onCreateChatMessage.bind(this));
+		Hooks.on("moveToken", this._onTokenMove.bind(this));
 		Hooks.on("renderCombatTracker", this._onRenderCombatTracker.bind(this));
 		// A combat may already be running when the world loads mid-combat; a
 		// late joiner/refresher restores the GM's last persisted state instead of
@@ -131,7 +141,8 @@ export class ActionTrackerTool {
 			round,
 			max: Number(Manager.setting(this.id, "actionsPerTurn")) || 3,
 			used: 0,
-			entries: []
+			entries: [],
+			movement: null
 		};
 	}
 
@@ -148,6 +159,7 @@ export class ActionTrackerTool {
 			console.warn(`${Manager.id} | action-tracker could not read persisted state`, error);
 		}
 		if (saved?.active && saved.combatantId === combatant?.id) {
+			saved.movement ??= null;
 			this._state = saved;
 		} else {
 			this._resetTurn(combatant, round);
@@ -166,7 +178,7 @@ export class ActionTrackerTool {
 	/*  Detection (GM only)                          */
 	/* -------------------------------------------- */
 
-	static _onCreateChatMessage(message) {
+	static async _onCreateChatMessage(message) {
 		if (!game.user.isGM) return;
 		if (!this._state.active) return;
 		const combatant = game.combat?.combatant;
@@ -179,7 +191,24 @@ export class ActionTrackerTool {
 		const flags = message.flags?.pf2e ?? {};
 		const context = flags.context ?? {};
 		const type = context.type ?? "";
+
+		// "Apply Effect" cards (e.g. Raise a Shield, Channel Elements): the card
+		// identifies its action/feat item via context.item and has no origin, and
+		// clicking the button applies the effect without posting another message,
+		// so the action is counted when its card appears.
+		if (type === "self-effect") {
+			this._logSelfEffect(speaker, context);
+			return;
+		}
 		if (this._skipTypes.has(type)) return;
+
+		// Consumable "Use" messages (healing potions etc.): the consume path
+		// posts an origin of {sourceId, uuid, type}, unlike an item card dropped
+		// into chat, whose origin carries {actor, uuid, type, rollOptions}.
+		if (!type && this._isConsumeMessage(flags.origin)) {
+			await this._logConsume(message, flags.origin);
+			return;
+		}
 
 		const origin = flags.origin ?? null;
 		let item = null;
@@ -200,9 +229,100 @@ export class ActionTrackerTool {
 		}
 
 		const name = this._resolveName(item, context, type);
-		this._state.entries.push({ name, cost, icon: this._iconFor(item, type) });
-		this._state.used += cost;
+		this._push({ name, cost, icon: this._iconFor(item, type) });
+	}
+
+	/**
+	 * Count a real token movement of the current combatant. Fires on every
+	 * client; only the GM acts. The `movement` op's `passed.cost` is the
+	 * terrain-aware measured cost in feet (exactly what pf2e's token ruler
+	 * displays while dragging), and the action cost mirrors the ruler:
+	 * `clamp(ceil(cost / speed), 1, 3)`. Consecutive moves merge into one
+	 * cumulative entry (see the `movement` chain in `_state`); any other action
+	 * breaks the chain. Forced/teleported moves (the `displace`/`blink`
+	 * movement actions) and non-finite/zero costs are ignored.
+	 */
+	static _onTokenMove(token, movement) {
+		if (!game.user.isGM) return;
+		if (!this._state.active) return;
+		const combatant = game.combat?.combatant;
+		const actor = combatant?.actor;
+		if (!actor) return;
+		if (token?.actor?.uuid !== actor.uuid) return;
+		if (!movement?.passed?.waypoints?.length) return;
+
+		const action = movement.passed.waypoints.at(-1)?.action ?? "";
+		const config = CONFIG.Token.movement.actions[action];
+		if (!config || config.teleport) return;
+		const speed = this._movementSpeed(actor, action);
+		if (typeof speed !== "number" || speed <= 0) return;
+
+		const cost = Number.isFinite(movement.passed.cost) && movement.passed.cost > 0
+			? movement.passed.cost
+			: movement.passed.distance;
+		if (!Number.isFinite(cost) || cost <= 0) return;
+
+		// Consecutive moves merge into a single cumulative entry: track the total
+		// measured cost and distance during the chain and derive the action cost
+		// from the total (same clamp as the token ruler). Any non-move action
+		// resets `movement`, so a later move starts a fresh entry.
+		const chain = this._state.movement ?? { totalCost: 0, totalDistance: 0, actions: 0 };
+		chain.totalCost += cost;
+		chain.totalDistance += movement.passed.distance ?? cost;
+		const newActions = Math.clamp(Math.ceil(chain.totalCost / speed), 1, 3);
+		const diff = newActions - chain.actions;
+		chain.actions = newActions;
+		this._state.movement = chain;
+
+		const distance = Math.round(chain.totalDistance);
+		const icon = { fa: this._movementIcon(action) };
+		const last = this._state.entries.at(-1);
+		if (last?.move) {
+			last.name = this._moveName(distance);
+			last.cost = newActions;
+			this._state.used += Math.max(0, diff);
+		} else {
+			this._state.entries.push({ name: this._moveName(distance), cost: newActions, icon, move: true });
+			this._state.used += newActions;
+		}
 		this._broadcast();
+	}
+
+	static _moveName(distance) {
+		return Manager.localize("actionTracker.move", { distance });
+	}
+
+	/**
+	 * Resolve the actor's speed for a movement action, mirroring pf2e's token
+	 * ruler `#getSpeed`: walk/step/crawl read the land speeds, other movement
+	 * types read their own speed.
+	 */
+	static _movementSpeed(actor, action) {
+		const speeds = actor.system?.movement?.speeds ?? {};
+		switch (action) {
+			case "walk": return speeds.land?.value;
+			case "step": return speeds.land?.step;
+			case "crawl": return speeds.land?.crawl;
+			case "fly": return speeds.fly?.value;
+			case "swim": return speeds.swim?.value;
+			case "burrow": return speeds.burrow?.value;
+			case "climb": return speeds.climb?.value;
+			default: return null;
+		}
+	}
+
+	/** Pick the Font Awesome icon for a movement action (core's own icons). */
+	static _movementIcon(action) {
+		const icons = {
+			walk: "fa-person-walking",
+			step: "fa-person-walking",
+			crawl: "fa-person-praying",
+			fly: "fa-person-fairy",
+			swim: "fa-person-swimming",
+			burrow: "fa-person-digging",
+			climb: "fa-person-through-window"
+		};
+		return icons[action] ?? "fa-person-walking";
 	}
 
 	/** Return the action cost (number) or null when the message is not an action. */
@@ -255,6 +375,69 @@ export class ActionTrackerTool {
 		return type || "Action";
 	}
 
+	/**
+	 * Log an "Apply Effect" (self-effect) action, e.g. Raise a Shield. The item
+	 * lives on the speaker — context.item is its id, not a uuid — and its cost
+	 * resolves like any other action/feat via `actionCost`.
+	 */
+	static _logSelfEffect(speaker, context) {
+		const item = speaker.items.get(context.item ?? "") ?? null;
+		if (!item) return;
+		const cost = this._resolveCost(item, "self-effect");
+		if (cost === null) return;
+		this._push({ name: item.name, cost, icon: this._iconFor(item, "self-effect") });
+	}
+
+	/**
+	 * Log a consumable "Use" action from a chat card's Use button (healing
+	 * potions and friends): the actor Interacts to use it, 1 action. Detected
+	 * via the consume message's minimal origin (see `_isConsumeMessage`).
+	 */
+	static async _logConsume(message, origin) {
+		// Fast path: mirror pf2e's own resolution (MessagePF2e#item) — the same
+		// getter the Use button relies on — which works while the item still exists.
+		let item = message.item ?? null;
+		// The potion is destroyed right after use (autoDestroy), so the world item
+		// may already be gone when the GM's hook runs; the compendium sourceId
+		// survives, so load that instead.
+		if (!item && origin.sourceId) {
+			try {
+				item = await fromUuid(origin.sourceId) ?? null;
+			} catch (error) {
+				console.debug(`${Manager.id} | action-tracker could not load consumed item source`, error);
+			}
+		}
+		if (!item) {
+			// Last resort: the item name is embedded in the localized consume text
+			// ("Uses X" / "Uses X, N remain" / "Exhausted X"), e.g. for homebrew
+			// items with no compendium source.
+			const name = (message.content ?? "").trim()
+				.replace(/^Exhausted\s+/i, "")
+				.replace(/^Uses\s+/i, "")
+				.replace(/,\s*\d+\s*remain$/i, "")
+				.trim();
+			if (name) {
+				this._push({ name, cost: 1, icon: { fa: "fa-flask-vial" } });
+			}
+			return;
+		}
+		this._push({ name: item.name, cost: 1, icon: { img: item.img } });
+	}
+
+	/** True for a consumable "Use" message (minimal origin), not an item card
+	 * dropped into chat (whose origin carries `actor` and `rollOptions`). */
+	static _isConsumeMessage(origin) {
+		return !!origin?.uuid && origin?.type === "consumable" && !origin?.actor && !origin?.rollOptions;
+	}
+
+	/** Record an entry for the current combatant, break any move chain, broadcast. */
+	static _push(entry) {
+		this._state.entries.push(entry);
+		this._state.used += entry.cost;
+		this._state.movement = null;
+		this._broadcast();
+	}
+
 	/* -------------------------------------------- */
 	/*  Manual GM corrections                        */
 	/* -------------------------------------------- */
@@ -264,25 +447,31 @@ export class ActionTrackerTool {
 		const n = Number(cost) || 1;
 		this._state.entries.push({ name: Manager.localize("actionTracker.manual"), cost: n, icon: { fa: "fa-hand-point-up" } });
 		this._state.used += n;
+		this._state.movement = null;
 		this._broadcast();
 	}
 
 	static spendFree() {
 		if (!game.user.isGM || !this._state.active) return;
 		this._state.entries.push({ name: Manager.localize("actionTracker.free"), cost: 0, icon: { fa: "fa-bolt" } });
+		this._state.movement = null;
 		this._broadcast();
 	}
 
 	static spendReaction() {
 		if (!game.user.isGM || !this._state.active) return;
 		this._state.entries.push({ name: Manager.localize("actionTracker.reaction"), cost: 0, icon: { fa: "fa-person-running" } });
+		this._state.movement = null;
 		this._broadcast();
 	}
 
 	static undo() {
 		if (!game.user.isGM || !this._state.active) return;
 		const entry = this._state.entries.pop();
-		if (entry) this._state.used = Math.max(0, this._state.used - entry.cost);
+		if (entry) {
+			this._state.used = Math.max(0, this._state.used - entry.cost);
+			if (entry.move) this._state.movement = null;
+		}
 		this._broadcast();
 	}
 
@@ -291,6 +480,7 @@ export class ActionTrackerTool {
 		this._countedSpellUuids.clear();
 		this._state.entries = [];
 		this._state.used = 0;
+		this._state.movement = null;
 		this._broadcast();
 	}
 

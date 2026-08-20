@@ -42,6 +42,7 @@
       "undo": "Undo last entry",
       "newTurn": "Reset for new turn",
       "manual": "Manual adjustment",
+      "move": "Move ({distance} ft)",
       "toggleTooltip": "Toggle the Action Tracker window",
       "keybindName": "Open the Action Tracker window",
       "keybindHint": "Reopens the Action Tracker window if it was closed."
