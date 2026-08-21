@@ -1,7 +1,7 @@
 {
   "id": "pf2e-vibemodulerp",
   "title": "PF2e VibeModuleRP",
-  "version": "1.15.2",
+  "version": "1.16.0",
   "compatibility": {
     "minimum": "12",
     "verified": "14.365"
@@ -28,6 +28,14 @@
       "type": "Item",
       "system": "pf2e",
       "private": false
+    },
+    {
+      "label": "Fly Pox Effect",
+      "name": "fly-pox-effect",
+      "path": "packs/fly-pox-effect.db",
+      "type": "Item",
+      "system": "pf2e",
+      "private": true
     }
   ],
   "esmodules": [

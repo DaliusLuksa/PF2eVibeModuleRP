@@ -38,6 +38,7 @@ export class ActionTrackerTool {
 	/** Current turn state, kept in sync on all clients (GM is the source of truth). */
 	static _state = {
 		active: false,
+		combatId: null,
 		combatantId: null,
 		combatantName: "",
 		combatantImg: "",
@@ -48,7 +49,16 @@ export class ActionTrackerTool {
 		// Consecutive-move chain: cumulative cost/distance/actions while the
 		// combatant only moves, so repeated moves merge into one entry. Reset on
 		// turn change and whenever any non-move action is logged.
-		movement: null
+		movement: null,
+		// Combatant affiliation/control (GM-driven per turn). Player clients only
+		// render the full window for party members; `hideAll` narrows that further.
+		friendly: false,
+		playerControlled: false,
+		// GM toggles: `hideAll` keeps only player-controlled party members visible
+		// on player clients; `disabled` blanks the window for everyone ("Action
+		// Tracker disabled by GM") and stops counting on the GM's client.
+		hideAll: false,
+		disabled: false
 	};
 
 	/** Spell item uuids already counted this turn (dedupe; reset on turn change). */
@@ -106,35 +116,46 @@ export class ActionTrackerTool {
 		// v14: `current` is a CombatHistoryData state object ({ round, turn,
 		// combatantId, tokenId }), NOT a Combatant document.
 		const combatant = combat.combatants.get(current?.combatantId ?? "") ?? combat.combatant ?? null;
-		this._resetTurn(combatant, combat.round);
+		this._resetTurn(combatant, combat.round, combat.id);
 		this._open();
 		if (game.user.isGM) this._broadcast();
 	}
 
 	static _onCombatUpdate(combat, changed) {
 		if (combat?.started) return;
-		if (game.combat?.id !== combat?.id) return;
+		// Track the combat we are following by its own id: at `deleteCombat` time
+		// `game.combat` is usually already null (core nulls `ui.combat.viewed`
+		// before the hook fires), so it cannot be used to recognize our combat.
+		const tracked = this._state.combatId ?? game.combat?.id ?? null;
+		if (tracked && tracked !== combat.id) return;
 		// Combat stopped (round reset to 0): close the window and clear state.
 		this._state.active = false;
 		this._countedSpellUuids.clear();
+		// GM toggles are per-combat session switches: reset for the next combat.
+		this._state.hideAll = false;
+		this._state.disabled = false;
 		this._persistState();
 		this._close();
 	}
 
 	static _onCombatDeleted(combat) {
-		if (game.combat?.id === combat?.id) {
-			this._state.active = false;
-			this._countedSpellUuids.clear();
-			this._persistState();
-			this._close();
-		}
+		const tracked = this._state.combatId ?? game.combat?.id ?? null;
+		if (tracked && tracked !== combat.id) return;
+		this._state.active = false;
+		this._countedSpellUuids.clear();
+		this._state.hideAll = false;
+		this._state.disabled = false;
+		this._persistState();
+		this._close();
 	}
 
 	/** Start a fresh turn for `combatant` on all clients (GM broadcasts after). */
-	static _resetTurn(combatant, round) {
+	static _resetTurn(combatant, round, combatId = null) {
 		this._countedSpellUuids.clear();
+		const actor = this._combatantActor(combatant);
 		this._state = {
 			active: true,
+			combatId: combatId ?? game.combat?.id ?? null,
 			combatantId: combatant?.id ?? null,
 			combatantName: combatant?.name ?? "",
 			combatantImg: combatant?.actor?.img ?? combatant?.img ?? "",
@@ -142,8 +163,25 @@ export class ActionTrackerTool {
 			max: Number(Manager.setting(this.id, "actionsPerTurn")) || 3,
 			used: 0,
 			entries: [],
-			movement: null
+			movement: null,
+			// Whether this combatant is on the players' side (pf2e alliance
+			// "party") and is actually owned by a non-GM player. Non-party
+			// combatants are hidden on player clients ("Enemy's turn"); when the
+			// GM enables `hideAll`, only player-controlled party members stay
+			// visible. GM toggles persist across turn changes.
+			friendly: actor?.alliance === "party",
+			playerControlled: actor?.hasPlayerOwner ?? false,
+			hideAll: this._state.hideAll ?? false,
+			disabled: this._state.disabled ?? false
 		};
+	}
+
+	/** Resolve the combatant's underlying world actor (linked or unlinked token)
+	 *  so affiliation/control come from canonical actor ownership data. */
+	static _combatantActor(combatant) {
+		const token = combatant?.token;
+		if (token?.actorId) return game.actors.get(token.actorId) ?? null;
+		return combatant?.actor ?? null;
 	}
 
 	/**
@@ -160,6 +198,16 @@ export class ActionTrackerTool {
 		}
 		if (saved?.active && saved.combatantId === combatant?.id) {
 			saved.movement ??= null;
+			saved.combatId ??= game.combat?.id ?? null;
+			saved.hideAll ??= false;
+			saved.disabled ??= false;
+			// Affiliation/control are re-derived from the live combatant's world
+			// actor — never from the persisted value, so a stale save or an
+			// alliance/ownership change can't leak (or falsely hide) a turn on
+			// player clients. GM toggles are kept as persisted.
+			const actor = this._combatantActor(combatant);
+			saved.friendly = actor?.alliance === "party";
+			saved.playerControlled = actor?.hasPlayerOwner ?? false;
 			this._state = saved;
 		} else {
 			this._resetTurn(combatant, round);
@@ -181,6 +229,7 @@ export class ActionTrackerTool {
 	static async _onCreateChatMessage(message) {
 		if (!game.user.isGM) return;
 		if (!this._state.active) return;
+		if (this._state.disabled) return;
 		const combatant = game.combat?.combatant;
 		const actor = combatant?.actor;
 		if (!actor) return;
@@ -245,6 +294,7 @@ export class ActionTrackerTool {
 	static _onTokenMove(token, movement) {
 		if (!game.user.isGM) return;
 		if (!this._state.active) return;
+		if (this._state.disabled) return;
 		const combatant = game.combat?.combatant;
 		const actor = combatant?.actor;
 		if (!actor) return;
@@ -442,15 +492,6 @@ export class ActionTrackerTool {
 	/*  Manual GM corrections                        */
 	/* -------------------------------------------- */
 
-	static spend(cost) {
-		if (!game.user.isGM || !this._state.active) return;
-		const n = Number(cost) || 1;
-		this._state.entries.push({ name: Manager.localize("actionTracker.manual"), cost: n, icon: { fa: "fa-hand-point-up" } });
-		this._state.used += n;
-		this._state.movement = null;
-		this._broadcast();
-	}
-
 	static spendFree() {
 		if (!game.user.isGM || !this._state.active) return;
 		this._state.entries.push({ name: Manager.localize("actionTracker.free"), cost: 0, icon: { fa: "fa-bolt" } });
@@ -475,12 +516,26 @@ export class ActionTrackerTool {
 		this._broadcast();
 	}
 
-	static newTurn() {
+	/** GM-only: toggle hiding every combatant from players except party members
+	 *  controlled by non-GM players. */
+	static toggleHideAll() {
 		if (!game.user.isGM || !this._state.active) return;
-		this._countedSpellUuids.clear();
-		this._state.entries = [];
-		this._state.used = 0;
-		this._state.movement = null;
+		this._state.hideAll = !this._state.hideAll;
+		this._broadcast();
+	}
+
+	/** GM-only: disable the tracker window for everyone ("Action Tracker disabled
+	 *  by GM", nothing else); counting stops while disabled, and re-enabling
+	 *  starts a fresh turn. */
+	static toggleDisable() {
+		if (!game.user.isGM) return;
+		this._state.disabled = !this._state.disabled;
+		if (this._state.disabled) {
+			this._countedSpellUuids.clear();
+			this._state.entries = [];
+			this._state.used = 0;
+			this._state.movement = null;
+		}
 		this._broadcast();
 	}
 
@@ -535,8 +590,16 @@ export class ActionTrackerTool {
 
 	static _context() {
 		const s = this._state;
+		// Players never see non-party combatants ("Enemy's turn"); with `hideAll`
+		// they additionally need the combatant to be player-controlled. The GM
+		// always sees the full window. `disabled` blanks the window for everyone.
+		const hidden = s.active && !s.disabled && !game.user.isGM
+			&& (!s.friendly || (s.hideAll && !s.playerControlled));
 		return {
 			active: s.active,
+			disabled: s.disabled,
+			hidden,
+			hideAll: s.hideAll,
 			combatantName: s.combatantName,
 			combatantImg: s.combatantImg,
 			round: s.round,
@@ -590,11 +653,11 @@ class ActionTrackerWindow extends foundry.applications.api.HandlebarsApplication
 			resizable: true
 		},
 		actions: {
-			spend: (event, target) => ActionTrackerTool.spend(Number(target.dataset.cost ?? 1)),
 			free: () => ActionTrackerTool.spendFree(),
 			reaction: () => ActionTrackerTool.spendReaction(),
 			undo: () => ActionTrackerTool.undo(),
-			newTurn: () => ActionTrackerTool.newTurn()
+			toggleHideAll: () => ActionTrackerTool.toggleHideAll(),
+			toggleDisable: () => ActionTrackerTool.toggleDisable()
 		}
 	};
 
