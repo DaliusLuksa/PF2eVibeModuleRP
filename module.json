@@ -1,7 +1,7 @@
 {
   "id": "pf2e-vibemodulerp",
   "title": "PF2e VibeModuleRP",
-  "version": "1.16.0",
+  "version": "1.20.0",
   "compatibility": {
     "minimum": "12",
     "verified": "14.365"
@@ -25,6 +25,14 @@
       "label": "Calm Effects",
       "name": "calm-effects",
       "path": "packs/calm-effects.db",
+      "type": "Item",
+      "system": "pf2e",
+      "private": false
+    },
+    {
+      "label": "Shattering Gem Effect",
+      "name": "shattering-gem-effect",
+      "path": "packs/shattering-gem-effect.db",
       "type": "Item",
       "system": "pf2e",
       "private": false

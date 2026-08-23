@@ -16,7 +16,7 @@ const LINKS = {
 
 export class CalmEffectsTool {
 	static id = "calm-effects";
-	static category = "calm-effects";
+	static category = "spell-effects";
 	static enabledDefault = true;
 
 	/* -------------------------------------------- */

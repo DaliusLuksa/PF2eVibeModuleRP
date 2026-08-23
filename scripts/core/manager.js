@@ -85,17 +85,37 @@ export const Manager = new (class {
 			this._renderReloadIndicators(pane);
 			let first = true;
 			const placed = new Set();
-			for (const category of this.categories) {
-				const firstSetting = pane.querySelector(`[name^="${this.id}.${category}"]`);
-				const row = firstSetting?.closest(".form-group");
-				if (!row) continue;
+			// Group tools by category. Setting names use TOOL ids, so rows must be
+			// selected per-tool (`<module id>.<tool id>.`); the category string
+			// alone is NOT a setting-name prefix.
+			const groups = new Map();
+			for (const tool of this.tools.values()) {
+				if (!tool.category) continue;
+				const prefixes = groups.get(tool.category) ?? [];
+				prefixes.push(`${tool.id}.`);
+				groups.set(tool.category, prefixes);
+			}
+			for (const [category, prefixes] of groups) {
+				const rows = prefixes.flatMap((prefix) =>
+					[...pane.querySelectorAll(`[name^="${this.id}.${prefix}"]`)]
+						.map((input) => input.closest(".form-group"))
+						.filter(Boolean)
+				);
+				if (!rows.length) continue;
 				const title = this.localize(`settings.categories.${category}`);
 				if (placed.has(title)) continue;
 				placed.add(title);
 				const header = document.createElement("h4");
 				header.textContent = title;
 				header.style.marginBlock = first ? "0" : "0.5em 0em";
-				row.before(header);
+				rows[0].before(header);
+				// Several tools may share one category; pull their rows together
+				// under the single header regardless of registration order.
+				let anchor = rows[0];
+				for (const row of rows.slice(1)) {
+					anchor.after(row);
+					anchor = row;
+				}
 				first = false;
 			}
 		} catch (error) {

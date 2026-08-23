@@ -63,7 +63,7 @@ const PACK_DESCRIPTION =
 	`<p>While the spell is active, the arm counts as a raised shield, granting a <strong>+2 circumstance bonus to AC</strong>. The target can Shield Block with it, reducing damage as if it had a shield with <strong>Hardness 4</strong> and <strong>15 Hit Points</strong>. This shield has no Broken Threshold, and the spell ends if the shield's Hit Points are expended.</p>` +
 	`<p><strong>Heightened (+2)</strong> The Hardness increases by 4, and the Hit Points increase by 15.</p>`;	export class ShieldedArmTool {
 	static id = "shielded-arm";
-	static category = "shielded-arm";
+	static category = "spell-effects";
 	static enabledDefault = true;
 
 	/** Pending GM effect-apply requests, keyed by request id. */

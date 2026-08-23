@@ -11,7 +11,9 @@ const MODULE_ROOT = "modules/pf2e-vibemodulerp";
  * who is acting, how many actions they have used, and what they did so far.
  * The GM's client watches chat messages: it resolves each action's cost (spell
  * casting time, action/feat `actionCost`, "Apply Effect"/self-effect cards,
- * consumable "Use" messages, weapon Strike, plain skill checks),
+ * consumable "Use" messages, weapon Strike, plain skill checks, and the system's
+ * flagless auxiliary-action EMOTE cards - Draw/Retrieve/Sheathe/Grip, Reload,
+ * Give/Exchange Items, Raise a Shield/Take Cover/Parry/Release),
  * and counts token movement from the Foundry `moveToken` hook (the terrain-aware
  * measured cost pf2e's token ruler already computes), picks a per-action icon
  * (spell artwork or a category default), and broadcasts
@@ -259,6 +261,17 @@ export class ActionTrackerTool {
 			return;
 		}
 
+		// pf2e auxiliary-action cards (Draw/Retrieve/Sheathe/Reload/Raise a
+		// Shield/Take Cover/...) are plain EMOTE messages with NO flags.pf2e at
+		// all - the cost and name must be parsed from the rendered card.
+		if (!type && !flags.origin) {
+			const aux = this._parseAuxiliaryCard(message);
+			if (aux) {
+				this._push(aux);
+				return;
+			}
+		}
+
 		const origin = flags.origin ?? null;
 		let item = null;
 		if (origin?.uuid) {
@@ -475,9 +488,60 @@ export class ActionTrackerTool {
 	}
 
 	/** True for a consumable "Use" message (minimal origin), not an item card
-	 * dropped into chat (whose origin carries `actor` and `rollOptions`). */
+	 *  dropped into chat (whose origin carries `actor` and `rollOptions`). */
 	static _isConsumeMessage(origin) {
 		return !!origin?.uuid && origin?.type === "consumable" && !origin?.actor && !origin?.rollOptions;
+	}
+
+	/**
+	 * Parse a pf2e auxiliary-action card (Draw, Reload, Raise a Shield, ...).
+	 *
+	 * These actions post plain EMOTE chat messages rendered from the system's
+	 * `chat/action/flavor.hbs` + `content.hbs` templates and carry NO
+	 * flags.pf2e. The flavor header has a stable shape:
+	 * `<h4 class="action"><strong>{title}</strong><span class="action-glyph">
+	 * {cost glyph}</span><span class="subtitle ...">(<span>{subtitle}</span>)</span></h4>`
+	 * where the title localizes one of the known action-title keys ("Interact",
+	 * "Raise a Shield", "Take Cover", ...) and the glyph encodes the cost
+	 * (1/2/3/F/R). Restricting to that title set avoids double-counting any
+	 * other flagless EMOTE cards.
+	 */
+	static _parseAuxiliaryCard(message) {
+		try {
+			if ((message.style ?? null) !== CONST.CHAT_MESSAGE_STYLES.EMOTE) return null;
+			const flavor = String(message.flavor ?? "");
+			if (!flavor.includes('<h4 class="action">')) return null;
+			this._auxiliaryTitles ??= [
+				"PF2E.Actions.Interact.Title",
+				"PF2E.Actions.RaiseAShield.Title",
+				"PF2E.Actions.TakeCover.Title",
+				"PF2E.Actions.EndCover.Title",
+				"PF2E.Actions.Parry.Title",
+				"PF2E.Actions.Release.Title"
+			].map((key) => game.i18n.localize(key));
+			const doc = new DOMParser().parseFromString(flavor, "text/html");
+			const header = doc.querySelector('h4.action');
+			const title = header?.querySelector("strong")?.textContent?.trim() ?? "";
+			if (!this._auxiliaryTitles.includes(title)) return null;
+			const subtitle = header.querySelector(".subtitle > span")?.textContent?.trim() ?? "";
+			const glyph = header.querySelector(".action-glyph")?.textContent?.trim() ?? "";
+			const cost = { 1: 1, 2: 2, 3: 3, F: 0, R: 0 }[glyph] ?? 1;
+			const name = subtitle ? `${title}: ${subtitle}` : title;
+			return { name, cost, icon: { fa: this._auxiliaryIcon(title, subtitle) } };
+		} catch (error) {
+			console.debug(`${Manager.id} | action-tracker could not parse an auxiliary action card`, error);
+			return null;
+		}
+	}
+
+	/** Pick an icon for an auxiliary-action entry by its parsed title/subtitle. */
+	static _auxiliaryIcon(title, subtitle) {
+		const text = `${title} ${subtitle}`.toLowerCase();
+		if (text.includes("reload")) return "fa-arrows-rotate";
+		if (text.includes("exchange") || text.includes("give")) return "fa-right-left";
+		if (text.includes("cover")) return "fa-user-shield";
+		if (text.includes("shield") || text.includes("parry")) return "fa-shield-halved";
+		return "fa-hand";
 	}
 
 	/** Record an entry for the current combatant, break any move chain, broadcast. */
@@ -491,6 +555,12 @@ export class ActionTrackerTool {
 	/* -------------------------------------------- */
 	/*  Manual GM corrections                        */
 	/* -------------------------------------------- */
+
+	/** Log a manual adjustment entry (+N actions, cost from the button). */
+	static spend(cost = 1) {
+		if (!game.user.isGM || !this._state.active) return;
+		this._push({ name: Manager.localize("actionTracker.manual"), cost, icon: { fa: "fa-hand-point-up" } });
+	}
 
 	static spendFree() {
 		if (!game.user.isGM || !this._state.active) return;
@@ -653,6 +723,7 @@ class ActionTrackerWindow extends foundry.applications.api.HandlebarsApplication
 			resizable: true
 		},
 		actions: {
+			spend: (event, target) => ActionTrackerTool.spend(Number(target?.dataset?.cost ?? 1)),
 			free: () => ActionTrackerTool.spendFree(),
 			reaction: () => ActionTrackerTool.spendReaction(),
 			undo: () => ActionTrackerTool.undo(),

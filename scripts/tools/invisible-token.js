@@ -15,7 +15,7 @@ export class InvisibleTokenTool {
 		{
 			key: "autoHide",
 			type: Boolean,
-			default: false,
+			default: true,
 			scope: "world"
 		}
 	];

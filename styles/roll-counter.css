@@ -30,6 +30,7 @@
 
 .roll-counter-tabs {
   flex: none;
+  flex-wrap: wrap;
   gap: 0.25rem;
   padding-bottom: 0.2rem;
   margin-bottom: 0.2rem;

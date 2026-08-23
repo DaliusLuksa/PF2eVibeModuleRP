@@ -13,9 +13,13 @@ import { SustainReminderTool } from "./tools/sustain-reminder.js";
 import { EffectAnimationTool } from "./tools/effect-animation.js";
 import { ActionTrackerTool } from "./tools/action-tracker.js";
 import { RollCounterTool } from "./tools/roll-counter.js";
+import { ClearTurnTargetsTool } from "./tools/clear-turn-targets.js";
+import { FrightenedDecayTool } from "./tools/frightened-decay.js";
+import { DyingAutomationTool } from "./tools/dying-automation.js";
+import { ShatteringGemTool } from "./tools/shattering-gem.js";
 
 Hooks.once("init", () => {
-	Manager.register(TemplateEffectsTool).register(ShieldedArmTool).register(CalmEffectsTool).register(InvisibleTokenTool).register(HideCursorTool).register(SpellShieldTrackerTool).register(AttributeRollTool).register(PopoutInitiativeTool).register(PopoutSortableRepairTool).register(VolumePersistenceTool).register(SustainReminderTool).register(EffectAnimationTool).register(ActionTrackerTool).register(RollCounterTool).registerSettings();
+	Manager.register(TemplateEffectsTool).register(ShieldedArmTool).register(CalmEffectsTool).register(InvisibleTokenTool).register(HideCursorTool).register(SpellShieldTrackerTool).register(AttributeRollTool).register(PopoutInitiativeTool).register(PopoutSortableRepairTool).register(VolumePersistenceTool).register(SustainReminderTool).register(EffectAnimationTool).register(ActionTrackerTool).register(RollCounterTool).register(ClearTurnTargetsTool).register(FrightenedDecayTool).register(DyingAutomationTool).register(ShatteringGemTool).registerSettings();
 	Manager.initialize();
 	Manager.boot();
 });

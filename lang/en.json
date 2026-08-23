@@ -55,7 +55,8 @@
       "tabAll": "All",
       "tabOutside": "Outside Combat",
       "tabCombat": "In Combat",
-      "tabNonD20": "Non-D20",
+      "tabNonD20Combat": "In-Combat Non-D20",
+      "tabNonD20Outside": "Out-of-Combat Non-D20",
       "rollsLabel": "Rolls",
       "allPlayers": "All Players",
       "currentSession": "Current Session ({date})",
@@ -84,6 +85,11 @@
         "destroyed": "{actor}'s {shield} shattered and the spell effect ended."
       }
     },
+    "dyingAutomation": {
+      "notify": {
+        "noGm": "PF2e VibeModuleRP: no GM is connected, so Dying could not be automated for {name}. Add the condition manually."
+      }
+    },
     "hide-cursor": {
       "notify": {
         "masterOff": "Improved invisibility is disabled by the master switch in the module settings.",
@@ -94,8 +100,7 @@
     "settings": {
       "categories": {
         "template-effects": "Template Effects settings",
-        "shielded-arm": "Shielded Arm settings",
-        "calm-effects": "Calm Effects settings",
+        "spell-effects": "New Spell Effects",
         "hide-cursor": "Invisibility settings",
         "invisible-token": "Invisibility settings",
         "spell-shield": "Spell Shield settings",
@@ -105,12 +110,39 @@
         "sustain-reminder": "Sustain Reminder settings",
         "effect-animation": "Effect Animation settings",
         "action-tracker": "Action Tracker settings",
-        "roll-counter": "Roll Counter settings"
+        "roll-counter": "Roll Counter settings",
+        "clear-turn-targets": "Clear Targets settings",
+        "frightened-decay": "Frightened Decay settings",
+        "dying-automation": "Dying Automation settings"
+      },
+      "frightened-decay": {
+        "enabled": {
+          "name": "Enable Auto-Decrease Frightened at Turn End",
+          "hint": "When a combatant's turn ends, their Frightened value decreases by 1 automatically (the condition is removed at 0), as the rules text promises. Feats that reduce Frightened faster (Dwarven Doughtiness, Calm and Centered) decrease it by 2. Applied by the GM's client for every combatant, including player characters."
+        }
+      },
+      "dying-automation": {
+        "enabled": {
+          "name": "Enable Dying & Wounded Automation",
+          "hint": "Player characters only. When a PC's HP drops from above 0 to exactly 0 from damage, they gain Dying 1 (Dying 2 if the dropping blow was a critical hit) plus their current Wounded value. When HP is healed back above 0, any Dying still present is removed (manual stabilization to Dying 0 is left alone), and every time the Dying condition is lost, Wounded 1 is gained or increased by 1. Damage taken while already dying and recovery checks stay manual. If the change was caused by a user who doesn't own the target (another player's heal or AoE), a connected GM applies it over the module socket."
+        }
+      },
+      "shattering-gem": {
+        "enabled": {
+          "name": "Enable Shattering Gem Effect Link",
+          "hint": "Adds a quick link to the module's 'Spell Effect: Shattering Gem' tracking effect to every copy of the Shattering Gem spell, right before its Heightened section. The GM's client patches spells already on actors; newly created copies are patched as they are made. Drag the effect from the link onto a creature to track which target the orbiting gem is protecting."
+        }
+      },
+      "clear-turn-targets": {
+        "enabled": {
+          "name": "Enable Clear Targets at Turn End",
+          "hint": "When a combatant's turn ends, everyone who controlled that combatant automatically loses all their current targets (the GM included), so leftover multi-target selections from AoE spells can't leak into later actions. Targets you set during other actors' turns are kept until your own turn finishes."
+        }
       },
       "action-tracker": {
         "enabled": {
           "name": "Enable Action Tracker",
-          "hint": "Shows an in-Foundry window while a combat is running with the current combatant's name, the actions they have used this turn. The GM's client automatically counts the current actor's actions from the chat (spell casting times, action/feat costs, weapon Strikes, and skill checks) and syncs the window to all players. GM-only buttons let you correct the count manually."
+          "hint": "Shows an in-Foundry window while a combat is running with the current combatant's name, the actions they have used this turn. The GM's client automatically counts the current actor's actions from the chat (spell casting times, action/feat costs, weapon Strikes, skill checks, consumable uses, item draws/retrieves/sheathes, reloads, and weapon auxiliary actions like Raise a Shield or Take Cover) and syncs the window to all players. GM-only buttons let you correct the count manually."
         },
         "actionsPerTurn": {
           "name": "Actions per Turn",
@@ -124,7 +156,7 @@
       "roll-counter": {
         "enabled": {
           "name": "Enable Roll Counter",
-          "hint": "Counts every d20 roll made in the world by the player who actually made it (GM rolls included), recorded with its natural result, whether it happened inside a combat, and a timestamp. Open the window with F8: pick a player from the dropdown to see their 1-20 bar chart across three tabs - all rolls, rolls outside combat, and rolls during combat. Records are saved automatically and survive reloads."
+          "hint": "Counts every d20 roll made in the world by the player who actually made it (GM rolls included), recorded with its natural result, whether it happened inside a combat, and a timestamp. Open the window with F8: pick a player from the dropdown to see their 1-20 bar chart across five tabs - all d20 rolls, d20 rolls outside combat, d20 rolls during combat, non-d20 dice rolled during combat, and non-d20 dice rolled outside combat. Records are saved automatically and survive reloads."
         },
         "showClear": {
           "name": "Show Clear Recorded Rolls button",

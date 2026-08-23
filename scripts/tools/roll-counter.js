@@ -280,7 +280,8 @@ export class RollCounterTool {
 			["all", "tabAll"],
 			["outside", "tabOutside"],
 			["combat", "tabCombat"],
-			["nonD20", "tabNonD20"]
+			["nonD20Combat", "tabNonD20Combat"],
+			["nonD20Outside", "tabNonD20Outside"]
 		];
 		const tabs = defs.map(([id, labelKey]) => {
 			const category = categories[id];
@@ -338,7 +339,8 @@ export class RollCounterTool {
 			all: this._countByPlayer(entries.filter((entry) => !entry.nonD20)),
 			outside: this._countByPlayer(entries.filter((entry) => !entry.inCombat && !entry.nonD20)),
 			combat: this._countByPlayer(entries.filter((entry) => entry.inCombat && !entry.nonD20)),
-			nonD20: this._countByPlayer(entries.filter((entry) => entry.nonD20))
+			nonD20Combat: this._countByPlayer(entries.filter((entry) => entry.inCombat && entry.nonD20)),
+			nonD20Outside: this._countByPlayer(entries.filter((entry) => !entry.inCombat && entry.nonD20))
 		};
 	}
 
