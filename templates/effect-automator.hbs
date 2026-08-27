@@ -1,0 +1,102 @@
+<section class="vibe-effect-automator">
+    <div class="ea-rules">
+        <h3 class="ea-heading">{{@root.i18n 'rulesLabel'}}</h3>
+        {{#if rules.length}}
+        <ul class="ea-list">
+            {{#each rules}}
+            <li class="ea-rule">
+                <div class="ea-rule-main">
+                    <span class="ea-rule-name">{{this.effectName}}</span>
+                    <span class="ea-rule-meta">
+                        {{@root.i18n 'triggerLabel'}} {{this.trigger}} · {{this.rollSummary}}{{#if this.removeOnTrigger}} · {{@root.i18n 'removeOnTrigger'}}{{/if}}
+                    </span>
+                    <span class="ea-rule-outcomes">{{@root.i18n 'outcomesLabel'}}: {{this.outcomes}}</span>
+                </div>
+                <div class="ea-rule-actions">
+                    <button type="button" class="ea-btn" data-action="edit" data-id="{{this.id}}" data-tooltip="{{@root.i18n 'edit'}}"><i class="fa-solid fa-pen"></i></button>
+                    <button type="button" class="ea-btn danger" data-action="remove" data-id="{{this.id}}" data-tooltip="{{@root.i18n 'delete'}}"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </li>
+            {{/each}}
+        </ul>
+        {{else}}
+        <p class="ea-empty">{{@root.i18n 'noRules'}}</p>
+        {{/if}}
+    </div>
+
+    <div class="ea-form">
+        <h3 class="ea-heading">{{#if editing}}{{@root.i18n 'editRule'}}{{else}}{{@root.i18n 'newRule'}}{{/if}}</h3>
+        {{#if draft}}
+        <div class="ea-field">
+            <label>{{@root.i18n 'sourceEffect'}}</label>
+            <div class="ea-source">
+                <input type="text" value="{{draft.effectUuid}}" readonly placeholder="{{@root.i18n 'noSource'}} {{draft.effectName}}">
+                <button type="button" class="ea-btn" data-action="pickSource" data-tooltip="{{@root.i18n 'pick'}}"><i class="fa-solid fa-magnifying-glass"></i></button>
+            </div>
+        </div>
+
+        <div class="ea-row">
+            <div class="ea-field">
+                <label for="ea-trigger">{{@root.i18n 'trigger'}}</label>
+                <select id="ea-trigger" name="trigger">
+                    {{#each triggers}}
+                    <option value="{{this.value}}" {{#if (eq ../draft.trigger this.value)}}selected{{/if}}>{{this.label}}</option>
+                    {{/each}}
+                </select>
+            </div>
+            <div class="ea-field">
+                <label for="ea-roll-type">{{@root.i18n 'rollType'}}</label>
+                <select id="ea-roll-type" name="rollType">
+                    <option value="reflex" {{#if (eq draft.roll.type 'reflex')}}selected{{/if}}>{{@root.i18n 'saveReflex'}}</option>
+                    <option value="fortitude" {{#if (eq draft.roll.type 'fortitude')}}selected{{/if}}>{{@root.i18n 'saveFortitude'}}</option>
+                    <option value="will" {{#if (eq draft.roll.type 'will')}}selected{{/if}}>{{@root.i18n 'saveWill'}}</option>
+                </select>
+            </div>
+            <div class="ea-field">
+                <label for="ea-dc">{{@root.i18n 'dc'}}</label>
+                <input type="number" id="ea-dc" name="dc" min="1" step="1" value="{{draft.roll.dc}}">
+            </div>
+            <div class="ea-field">
+                <label class="ea-rad">&nbsp;</label>
+                <label class="ea-rad"><input type="checkbox" name="removeOnTrigger" {{#if draft.removeOnTrigger}}checked{{/if}}> {{@root.i18n 'removeOnTrigger'}}</label>
+            </div>
+        </div>
+
+        <div class="ea-field">
+            <label>{{@root.i18n 'outcomesLabel'}}</label>
+            <div class="ea-outcomes">
+                {{#each @root.outcomeRows as |row|}}
+                <div class="ea-outcomes-row">
+                    {{#each row.outcomes as |o|}}
+                    <div class="ea-outcome">
+                        <div class="ea-outcome-head">
+                            <span>{{o.label}}</span>
+                            <button type="button" class="ea-add" data-action="outcomeAdd" data-key="{{o.key}}"><i class="fa-solid fa-plus"></i></button>
+                        </div>
+                        <ul class="ea-outcome-effects">
+                            {{#each o.effects as |e|}}
+                            <li>
+                                <span>{{e.name}}</span>
+                                <button type="button" class="ea-btn" data-action="outcomeRemove" data-key="{{../key}}" data-index="{{e.index}}"><i class="fa-solid fa-xmark"></i></button>
+                            </li>
+                            {{/each}}
+                        </ul>
+                    </div>
+                    {{/each}}
+                </div>
+                {{/each}}
+            </div>
+        </div>
+
+        <div class="ea-actions">
+            <button type="button" class="ea-save" data-action="save"><i class="fa-solid fa-check"></i> {{@root.i18n 'save'}}</button>
+            <button type="button" class="ea-cancel" data-action="resetForm">{{@root.i18n 'cancel'}}</button>
+        </div>
+        {{else}}
+        <div class="ea-form-empty">
+            <p>{{@root.i18n 'formHint'}}</p>
+            <button type="button" class="ea-save" data-action="pickSource"><i class="fa-solid fa-plus"></i> {{@root.i18n 'newRule'}}</button>
+        </div>
+        {{/if}}
+    </div>
+</section>

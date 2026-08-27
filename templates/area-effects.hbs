@@ -1,0 +1,197 @@
+<section class="vibe-area-effects">
+    <nav class="tabs ae-tabs" data-group="main">
+        {{#each tabs as |tab|}}
+        <button type="button" class="item {{tab.cssClass}}" data-action="tab" data-group="main" data-tab="{{tab.id}}">
+            {{#if tab.icon}}<i class="{{tab.icon}}"></i>{{/if}}
+            {{tab.label}}
+        </button>
+        {{/each}}
+    </nav>
+
+    <div class="tab ae-pane {{#if (eq currentTab 'persistent')}}active{{/if}}" data-group="main" data-tab="persistent">
+        <form class="ae-form">
+        <h3 class="ae-heading">{{@root.i18n 'newArea'}}</h3>
+
+        <div class="ae-field">
+            <label for="ae-name">{{@root.i18n 'name'}}</label>
+            <input type="text" id="ae-name" name="name" value="{{draft.name}}" placeholder="{{@root.i18n 'namePlaceholder'}}">
+        </div>
+
+        <div class="ae-row">
+            <div class="ae-field">
+                <label for="ae-shape">{{@root.i18n 'shape'}}</label>
+                <select id="ae-shape" name="shape">
+                    {{#each shapes}}
+                    <option value="{{this.key}}" {{#if (eq ../draft.kind this.key)}}selected{{/if}}>{{this.label}}</option>
+                    {{/each}}
+                </select>
+            </div>
+
+            <div class="ae-field">
+                <label for="ae-size">{{@root.i18n 'size'}}</label>
+                <input type="number" id="ae-size" name="size" min="5" step="5" value="{{draft.size}}">
+            </div>
+
+            <div class="ae-field">
+                <label for="ae-duration">{{@root.i18n 'duration'}}</label>
+                <input type="number" id="ae-duration" name="duration" min="0" step="1" value="{{draft.duration}}">
+            </div>
+        </div>
+        <p class="ae-hint">{{@root.i18n 'durationHint'}}</p>
+
+        <div class="ae-field">
+            <label for="ae-durationMode">{{@root.i18n 'trackBy'}}</label>
+            <select id="ae-durationMode" name="durationMode">
+                <option value="combat" {{#if (eq draft.durationMode 'combat')}}selected{{/if}}>{{@root.i18n 'trackCombat'}}</option>
+                <option value="caster" {{#if (eq draft.durationMode 'caster')}}selected{{/if}}>{{@root.i18n 'trackCaster'}}</option>
+            </select>
+            <p class="ae-hint">{{@root.i18n 'trackModeHint'}}</p>
+        </div>
+
+        <div class="ae-field">
+            <label for="ae-terrain">{{@root.i18n 'terrainLabel'}}</label>
+            <select id="ae-terrain" name="terrain">
+                <option value="" {{#unless draft.terrain}}selected{{/unless}}>{{@root.i18n 'terrainNone'}}</option>
+                <option value="difficult" {{#if (eq draft.terrain 'difficult')}}selected{{/if}}>{{@root.i18n 'terrainDifficult'}}</option>
+                <option value="greater" {{#if (eq draft.terrain 'greater')}}selected{{/if}}>{{@root.i18n 'terrainGreater'}}</option>
+            </select>
+            <p class="ae-hint">{{@root.i18n 'terrainHint'}}</p>
+        </div>
+
+        <div class="ae-row">
+            <div class="ae-field">
+                <label class="ae-rad"><input type="checkbox" name="private" {{#if draft.private}}checked{{/if}}> {{@root.i18n 'privateLabel'}}</label>
+                <p class="ae-hint">{{@root.i18n 'privateHint'}}</p>
+            </div>
+            {{#if isGM}}
+            <div class="ae-field">
+                <label class="ae-rad"><input type="checkbox" name="gmOnly" {{#if draft.gmOnly}}checked{{/if}}> {{@root.i18n 'gmOnlyLabel'}}</label>
+                <p class="ae-hint">{{@root.i18n 'gmOnlyHint'}}</p>
+            </div>
+            {{/if}}
+        </div>
+
+        <div class="ae-field">
+            <label>{{@root.i18n 'modeLabel'}}</label>
+            <div class="ae-modes">
+                <label class="ae-rad"><input type="radio" name="mode" value="inside" {{#if (eq draft.mode 'inside')}}checked{{/if}}> {{@root.i18n 'modeInside'}}</label>
+                <label class="ae-rad"><input type="radio" name="mode" value="once" {{#if (eq draft.mode 'once')}}checked{{/if}}> {{@root.i18n 'modeOnce'}}</label>
+            </div>
+            <p class="ae-hint">{{@root.i18n 'modeHint'}}</p>
+        </div>
+
+        <div class="ae-field">
+            <label>{{@root.i18n 'effectsLabel'}}</label>
+            <ul class="ae-effects">
+                {{#each draft.effects}}
+                <li class="ae-effect" data-uuid="{{this.uuid}}">
+                    <span class="ae-effect-name">{{this.name}}</span>
+                    <button type="button" class="ae-remove" data-action="removeEffect" data-index="{{@index}}" data-tooltip="{{@root.i18n 'remove'}}"><i class="fa-solid fa-xmark"></i></button>
+                </li>
+                {{else}}
+                <li class="ae-effects-empty">{{@root.i18n 'noEffects'}}</li>
+                {{/each}}
+            </ul>
+            <button type="button" class="ae-add" data-action="addEffect"><i class="fa-solid fa-plus"></i> {{@root.i18n 'addEffect'}}</button>
+        </div>
+
+        <button type="button" class="ae-place" data-action="place"><i class="fa-solid fa-circle-dot"></i> {{@root.i18n 'place'}}</button>
+        <p class="ae-hint">{{@root.i18n 'placeHint'}}</p>
+    </form>
+
+    <div class="ae-areas">
+        <h3 class="ae-heading">{{@root.i18n 'areasLabel'}}</h3>
+        {{#if areas.length}}
+        <ul class="ae-list">
+            {{#each areas}}
+            <li class="ae-item {{#if this.disabled}}disabled{{/if}}">
+                <div class="ae-item-main">
+                    <span class="ae-item-name">{{this.name}} {{#if this.private}}<i class="fa-solid fa-lock ae-private" data-tooltip="{{@root.i18n 'privateBadge'}}"></i>{{/if}}{{#if this.gmOnly}}<i class="fa-solid fa-eye-slash ae-private" data-tooltip="{{@root.i18n 'gmOnlyBadge'}}"></i>{{/if}}{{#if this.disabled}} <em class="ae-item-paused">({{@root.i18n 'paused'}})</em>{{/if}}</span>
+                    <span class="ae-item-meta">
+                        {{this.shape}} · {{@root.i18n 'tokensIn'}} {{this.count}} · {{this.effectCount}} {{@root.i18n 'effectsShort'}} · {{this.durationText}}{{#if this.terrainText}} · <span class="ae-terrain">{{this.terrainText}}</span>{{/if}}
+                    </span>
+                    {{#if canManage}}
+                    <span class="ae-item-modes">
+                        <label class="ae-rad"><input type="radio" name="mode-{{this.id}}" value="inside" {{#if (eq this.mode 'inside')}}checked{{/if}} data-role="area-mode" data-id="{{this.id}}"> {{@root.i18n 'modeInsideShort'}}</label>
+                        <label class="ae-rad"><input type="radio" name="mode-{{this.id}}" value="once" {{#if (eq this.mode 'once')}}checked{{/if}} data-role="area-mode" data-id="{{this.id}}"> {{@root.i18n 'modeOnceShort'}}</label>
+                    </span>
+                    {{/if}}
+                </div>
+                {{#if this.effects.length}}
+                <ul class="ae-item-effects">
+                    {{#each this.effects}}
+                    <li>{{this.name}}</li>
+                    {{/each}}
+                </ul>
+                {{/if}}
+                {{#if canManage}}
+                <div class="ae-item-actions">
+                {{#if @root.isGM}}
+                    <button type="button" class="ae-btn" data-action="gmOnly" data-id="{{this.id}}" data-tooltip="{{#if this.gmOnly}}{{@root.i18n 'gmOnlyOn'}}{{else}}{{@root.i18n 'gmOnlyOff'}}{{/if}}"><i class="fa-solid {{#if this.gmOnly}}fa-eye-slash{{else}}fa-eye{{/if}}"></i></button>
+                {{/if}}
+                    <button type="button" class="ae-btn" data-action="enable" data-id="{{this.id}}" data-tooltip="{{#if this.disabled}}{{@root.i18n 'enable'}}{{else}}{{@root.i18n 'disable'}}{{/if}}"><i class="fa-solid {{#if this.disabled}}fa-play{{else}}fa-pause{{/if}}"></i></button>
+                    <button type="button" class="ae-btn danger" data-action="removeRegion" data-id="{{this.id}}" data-tooltip="{{@root.i18n 'delete'}}"><i class="fa-solid fa-trash"></i></button>
+                </div>
+                {{/if}}
+            </li>
+            {{/each}}
+        </ul>
+        {{else}}
+        <p class="ae-empty">{{@root.i18n 'noAreas'}}</p>
+        {{/if}}
+    </div>
+    </div>
+
+    <div class="tab ae-pane {{#if (eq currentTab 'instant')}}active{{/if}}" data-group="main" data-tab="instant">
+        <form class="ae-form ae-instant-form">
+            <div class="ea-row">
+                <div class="ae-field">
+                    <label for="ae-instant-shape">{{@root.i18n 'shape'}}</label>
+                    <select id="ae-instant-shape" name="instant-shape">
+                        {{#each shapes}}
+                        <option value="{{this.key}}" {{#if (eq ../instantDraft.kind this.key)}}selected{{/if}}>{{this.label}}</option>
+                        {{/each}}
+                    </select>
+                </div>
+
+                <div class="ae-field">
+                    <label for="ae-instant-size">{{@root.i18n 'size'}}</label>
+                    <input type="number" id="ae-instant-size" name="instant-size" min="5" step="5" value="{{instantDraft.size}}">
+                </div>
+
+                <div class="ae-field">
+                    <label for="ae-instant-target">{{@root.i18n 'targetLabel'}}</label>
+                    <select id="ae-instant-target" name="instant-target">
+                        <option value="all" {{#if (eq instantDraft.targetFilter 'all')}}selected{{/if}}>{{@root.i18n 'targetAll'}}</option>
+                        <option value="allies" {{#if (eq instantDraft.targetFilter 'allies')}}selected{{/if}}>{{@root.i18n 'targetAllies'}}</option>
+                        <option value="enemies" {{#if (eq instantDraft.targetFilter 'enemies')}}selected{{/if}}>{{@root.i18n 'targetEnemies'}}</option>
+                    </select>
+                </div>
+
+                <div class="ae-field">
+                    <label class="ea-rad">&nbsp;</label>
+                    <label class="ea-rad"><input type="checkbox" name="instant-self" {{#if instantDraft.includeSelf}}checked{{/if}}> {{@root.i18n 'includeSelf'}}</label>
+                    <label class="ea-rad"><input type="checkbox" name="instant-neutral" {{#if instantDraft.includeNeutral}}checked{{/if}}> {{@root.i18n 'includeNeutral'}}</label>
+                </div>
+            </div>
+
+            <div class="ae-field">
+                <label>{{@root.i18n 'effectsLabel'}}</label>
+                <ul class="ae-effects">
+                    {{#each instantDraft.effects}}
+                    <li class="ae-effect" data-uuid="{{this.uuid}}">
+                        <span class="ae-effect-name">{{this.name}}</span>
+                        <button type="button" class="ae-remove" data-action="removeInstantEffect" data-index="{{@index}}" data-tooltip="{{@root.i18n 'remove'}}"><i class="fa-solid fa-xmark"></i></button>
+                    </li>
+                    {{else}}
+                    <li class="ae-effects-empty">{{@root.i18n 'noEffects'}}</li>
+                    {{/each}}
+                </ul>
+                <button type="button" class="ae-add" data-action="pickInstantEffect"><i class="fa-solid fa-plus"></i> {{@root.i18n 'addEffect'}}</button>
+            </div>
+
+            <button type="button" class="ae-place" data-action="placeInstant"><i class="fa-solid fa-bolt"></i> {{@root.i18n 'placeInstant'}}</button>
+            <p class="ae-hint">{{@root.i18n 'instantHint'}}</p>
+        </form>
+    </div>
+</section>

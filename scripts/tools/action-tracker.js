@@ -1,4 +1,5 @@
 import { Manager } from "../core/manager.js";
+import { rememberWindowPosition } from "../core/window-positions.js";
 
 const SOCKET_EVENT = `module.${Manager.id}`;
 const SOCKET_ACTION_STATE = "actionTrackerState";
@@ -97,7 +98,6 @@ export class ActionTrackerTool {
 		Hooks.on("deleteCombat", this._onCombatDeleted.bind(this));
 		Hooks.on("createChatMessage", this._onCreateChatMessage.bind(this));
 		Hooks.on("moveToken", this._onTokenMove.bind(this));
-		Hooks.on("renderCombatTracker", this._onRenderCombatTracker.bind(this));
 		// A combat may already be running when the world loads mid-combat; a
 		// late joiner/refresher restores the GM's last persisted state instead of
 		// starting from an empty turn (it would otherwise only sync on the next action).
@@ -562,13 +562,6 @@ export class ActionTrackerTool {
 		this._push({ name: Manager.localize("actionTracker.manual"), cost, icon: { fa: "fa-hand-point-up" } });
 	}
 
-	static spendFree() {
-		if (!game.user.isGM || !this._state.active) return;
-		this._state.entries.push({ name: Manager.localize("actionTracker.free"), cost: 0, icon: { fa: "fa-bolt" } });
-		this._state.movement = null;
-		this._broadcast();
-	}
-
 	static spendReaction() {
 		if (!game.user.isGM || !this._state.active) return;
 		this._state.entries.push({ name: Manager.localize("actionTracker.reaction"), cost: 0, icon: { fa: "fa-person-running" } });
@@ -653,11 +646,6 @@ export class ActionTrackerTool {
 		}
 	}
 
-	static _toggleWindow() {
-		if (this._window?.rendered) this._close();
-		else this._open();
-	}
-
 	static _context() {
 		const s = this._state;
 		// Players never see non-party combatants ("Enemy's turn"); with `hideAll`
@@ -681,38 +669,16 @@ export class ActionTrackerTool {
 			i18n: (key) => Manager.localize(`actionTracker.${key}`)
 		};
 	}
-
-	/* -------------------------------------------- */
-	/*  Combat tracker header toggle (GM only)       */
-	/* -------------------------------------------- */
-
-	static _onRenderCombatTracker(app, html) {
-		if (!game.user.isGM) return;
-		const element = html?.jquery ? html[0] : html;
-		const nav = element?.querySelector?.(".combat-tracker-header nav.encounters");
-		if (!nav || nav.querySelector(".vibe-action-tracker-toggle")) return;
-		const button = document.createElement("button");
-		button.type = "button";
-		button.className = "inline-control icon fa-solid fa-stopwatch vibe-action-tracker-toggle";
-		button.dataset.tooltip = Manager.localize("actionTracker.toggleTooltip");
-		button.setAttribute("aria-label", Manager.localize("actionTracker.toggleTooltip"));
-		button.addEventListener("click", (event) => {
-			event.preventDefault();
-			event.stopPropagation();
-			this._toggleWindow();
-		});
-		const gear = element.querySelector(".combat-tracker-header nav [data-action='trackerSettings']");
-		if (gear) nav.insertBefore(button, gear);
-		else nav.append(button);
-	}
 }
 
 /* -------------------------------------------- */
 /*  Window                                      */
 /* -------------------------------------------- */
 
-class ActionTrackerWindow extends foundry.applications.api.HandlebarsApplicationMixin(
-	foundry.applications.api.ApplicationV2
+class ActionTrackerWindow extends rememberWindowPosition(
+	foundry.applications.api.HandlebarsApplicationMixin(
+		foundry.applications.api.ApplicationV2
+	)
 ) {
 	static DEFAULT_OPTIONS = {
 		id: "action-tracker",
@@ -724,7 +690,6 @@ class ActionTrackerWindow extends foundry.applications.api.HandlebarsApplication
 		},
 		actions: {
 			spend: (event, target) => ActionTrackerTool.spend(Number(target?.dataset?.cost ?? 1)),
-			free: () => ActionTrackerTool.spendFree(),
 			reaction: () => ActionTrackerTool.spendReaction(),
 			undo: () => ActionTrackerTool.undo(),
 			toggleHideAll: () => ActionTrackerTool.toggleHideAll(),

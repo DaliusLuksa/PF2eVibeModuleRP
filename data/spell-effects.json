@@ -1,0 +1,26 @@
+{
+  "Entangling Flora": {
+    "window": "persistent",
+    "effects": [
+      "Compendium.pf2e-vibemodulerp.entangling-flora-effect.Item.EntFloraInA00001"
+    ],
+    "mode": "inside",
+    "duration": 10,
+    "durationMode": "caster",
+    "terrain": "difficult"
+  },
+  "Darkness": {
+    "window": "persistent",
+    "effects": [
+      "Compendium.pf2e.conditionitems.Item.XgEqL1kFApUbl5Z2",
+      "Compendium.pf2e.conditionitems.Item.AJh5ex99aV6VTggg"
+    ],
+    "mode": "inside",
+    "duration": 10,
+    "durationMode": "caster"
+  },
+  "Calm": {
+    "window": "instant"
+  },
+  "_help": "Key each entry by an exact spell NAME. Value is either an array of Item UUIDs (just the effects) or an object: { window: \"persistent\"|\"instant\" (which tab opens after clicking Place), effects: [Item UUIDs], mode: \"inside\"|\"once\", duration: rounds (0=unlimited), durationMode: \"combat\"|\"caster\", terrain: \"difficult\"|\"greater\" (optional, makes the area difficult/greater difficult terrain on the token ruler; walking only) }. Effects are PF2e spell-effect Item UUIDs (grab them from any effect, e.g. Compendium.pf2e.spell-effects.Item.<id>)."
+}

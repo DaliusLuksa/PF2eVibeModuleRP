@@ -1,4 +1,5 @@
 import { Manager } from "../core/manager.js";
+import { rememberWindowPosition } from "../core/window-positions.js";
 
 const SOCKET_EVENT = `module.${Manager.id}`;
 const SOCKET_ACTION_DELTA = "rollCounterDelta";
@@ -406,8 +407,10 @@ export class RollCounterTool {
 /*  Window                                      */
 /* -------------------------------------------- */
 
-class RollCounterWindow extends foundry.applications.api.HandlebarsApplicationMixin(
-	foundry.applications.api.ApplicationV2
+class RollCounterWindow extends rememberWindowPosition(
+	foundry.applications.api.HandlebarsApplicationMixin(
+		foundry.applications.api.ApplicationV2
+	)
 ) {
 	static DEFAULT_OPTIONS = {
 		id: "roll-counter",

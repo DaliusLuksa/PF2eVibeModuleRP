@@ -1,0 +1,25 @@
+{
+  "rules": [
+    {
+      "id": "ubdimoqfFBkZIzXO",
+      "effectUuid": "Compendium.pf2e-vibemodulerp.entangling-flora-effect.Item.EntFloraInA00001",
+      "trigger": "turnStart",
+      "roll": {
+        "type": "reflex",
+        "dc": "20"
+      },
+      "removeOnTrigger": false,
+      "outcomes": {
+        "criticalSuccess": [],
+        "success": [],
+        "failure": [
+          "Compendium.pf2e.spell-effects.Item.rjM25qfw5BKj9h97"
+        ],
+        "criticalFailure": [
+          "Compendium.pf2e.spell-effects.Item.rjM25qfw5BKj9h97",
+          "Compendium.pf2e.conditionitems.Item.eIcWbB5o3pP6OIMe"
+        ]
+      }
+    }
+  ]
+}

@@ -53,6 +53,10 @@ export class TemplateEffectsTool {
 	static async _onCreateRegion(region, data, userId) {
 		const user = game.user;
 		if (!user || user.id !== userId || !canvas.scene || !region.isEffectArea) return;
+		// Regions created by the Persistent Area Effects tool already carry the
+		// pf2e area flags (so Automated Animations can match the spell) but must
+		// NOT trigger this targeting dialog — we skip any area this module made.
+		if (region.getFlag(Manager.id, "areaEffects")) return;
 		const origin = region.flags[SYSTEM_ID]?.origin;
 		const shapeCount = region.shapes?.length ?? region.shapes?.size ?? 0;
 		if (!origin || shapeCount === 0) return;
@@ -110,7 +114,7 @@ export class TemplateEffectsTool {
 
 	static async _prompt(origin, casterToken) {
 		const noSelf = !casterToken;
-		const content = await renderTemplate(`${MODULE_ROOT}/templates/template-effects/dialog.hbs`, {
+		const content = await foundry.applications.handlebars.renderTemplate(`${MODULE_ROOT}/templates/template-effects/dialog.hbs`, {
 			noSelf,
 			applyEffects: this._lastApplyEffects(),
 			i18n: (key) => Manager.localize(`dialog.${key}`)

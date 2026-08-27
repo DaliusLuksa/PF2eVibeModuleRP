@@ -17,9 +17,14 @@ import { ClearTurnTargetsTool } from "./tools/clear-turn-targets.js";
 import { FrightenedDecayTool } from "./tools/frightened-decay.js";
 import { DyingAutomationTool } from "./tools/dying-automation.js";
 import { ShatteringGemTool } from "./tools/shattering-gem.js";
+import { AreaEffectsTool } from "./tools/area-effects.js";
+import { FeatureHubTool } from "./tools/feature-hub.js";
+import { EffectAutomatorTool } from "./tools/effect-automator.js";
+import { LightTetherTool } from "./tools/light-tether.js";
+import { HandlebarsFixTool } from "./tools/handlebars-fix.js";
 
 Hooks.once("init", () => {
-	Manager.register(TemplateEffectsTool).register(ShieldedArmTool).register(CalmEffectsTool).register(InvisibleTokenTool).register(HideCursorTool).register(SpellShieldTrackerTool).register(AttributeRollTool).register(PopoutInitiativeTool).register(PopoutSortableRepairTool).register(VolumePersistenceTool).register(SustainReminderTool).register(EffectAnimationTool).register(ActionTrackerTool).register(RollCounterTool).register(ClearTurnTargetsTool).register(FrightenedDecayTool).register(DyingAutomationTool).register(ShatteringGemTool).registerSettings();
+	Manager.register(TemplateEffectsTool).register(ShieldedArmTool).register(CalmEffectsTool).register(InvisibleTokenTool).register(HideCursorTool).register(SpellShieldTrackerTool).register(AttributeRollTool).register(PopoutInitiativeTool).register(PopoutSortableRepairTool).register(VolumePersistenceTool).register(SustainReminderTool).register(EffectAnimationTool).register(ActionTrackerTool).register(RollCounterTool).register(ClearTurnTargetsTool).register(FrightenedDecayTool).register(DyingAutomationTool).register(ShatteringGemTool).register(AreaEffectsTool).register(FeatureHubTool).register(EffectAutomatorTool).register(LightTetherTool).register(HandlebarsFixTool).registerSettings();
 	Manager.initialize();
 	Manager.boot();
 });

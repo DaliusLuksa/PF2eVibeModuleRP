@@ -1,7 +1,7 @@
 {
   "id": "pf2e-vibemodulerp",
   "title": "PF2e VibeModuleRP",
-  "version": "1.20.0",
+  "version": "1.25.1",
   "compatibility": {
     "minimum": "12",
     "verified": "14.365"
@@ -44,6 +44,14 @@
       "type": "Item",
       "system": "pf2e",
       "private": true
+    },
+    {
+      "label": "Entangling Flora Effect",
+      "name": "entangling-flora-effect",
+      "path": "packs/entangling-flora-effect.db",
+      "type": "Item",
+      "system": "pf2e",
+      "private": false
     }
   ],
   "esmodules": [
@@ -54,7 +62,10 @@
     "styles/attribute-roll.css",
     "styles/sustain-reminder.css",
     "styles/action-tracker.css",
-    "styles/roll-counter.css"
+    "styles/roll-counter.css",
+    "styles/area-effects.css",
+    "styles/feature-hub.css",
+    "styles/effect-automator.css"
   ],
   "languages": [
     {
@@ -70,6 +81,11 @@
         "type": "system"
       }
     ]
+  },
+  "documentTypes": {
+    "RegionBehavior": {
+      "areaEffects": {}
+    }
   },
   "socket": true,
   "url": "https://github.com/DaliusLuksa/PF2eVibeModuleRP",

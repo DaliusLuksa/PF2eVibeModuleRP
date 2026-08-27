@@ -50,6 +50,139 @@
       "keybindName": "Open the Action Tracker window",
       "keybindHint": "Reopens the Action Tracker window if it was closed."
     },
+    "areaEffects": {
+      "title": "Area Effects",
+      "tabPersistent": "Persistent AoE",
+      "tabInstant": "Instant AoE",
+      "targetLabel": "Auto-target",
+      "targetAll": "All",
+      "targetAllies": "Allies",
+      "targetEnemies": "Enemies",
+      "includeSelf": "Include Self",
+      "includeNeutral": "Include Neutral",
+      "placeInstant": "Place Instant AoE",
+      "instantHint": "Places a one-shot area: every matching token inside is auto-targeted and receives all listed effects immediately, then the area is removed.",
+      "instantDefaultName": "Instant AoE",
+      "behaviorLabel": "Area Effects",
+      "behaviorHint": "Applies the configured spell effects to tokens inside this area and removes them when they leave (depending on the chosen mode).",
+      "controlTitle": "Vibe Areas",
+      "keybindName": "Open the Area Effects window",
+      "keybindHint": "Reopens the Persistent Area Effects window if it was closed.",
+      "newArea": "New Area",
+      "name": "Name (optional)",
+      "namePlaceholder": "E.g. Fire Zone, Cloudkill",
+      "shape": "Shape",
+      "size": "Size (ft)",
+      "feet": "ft",
+      "shapeBurst": "Burst",
+      "shapeCone": "Cone",
+      "shapeLine": "Line",
+      "shapeCube": "Cube",
+      "modeLabel": "Effect behavior",
+      "modeInside": "While inside (apply on entry, remove on leaving)",
+      "modeOnce": "Once on entry (run natural duration)",
+      "modeInsideShort": "Inside",
+      "modeOnceShort": "Once",
+      "modeHint": "While inside: effects are re-applied on entry and taken back when the token leaves. Once: effects are applied on entry and left to expire on their own.",
+      "duration": "Duration (rounds)",
+      "rounds": "rounds",
+      "durationHint": "How many combat rounds the area lasts before it expires. 0 = unlimited (no expiry tracking).",
+      "trackBy": "Track duration by",
+      "trackCombat": "Combat round (expires after N rounds)",
+      "trackCaster": "Caster's turns (expires after N of that actor's turns)",
+      "trackCombatShort": "combat",
+      "trackCasterShort": "caster",
+      "trackModeHint": "Combat: counts down once per combat round. Caster: assumes the actor whose turn it is when you place it cast the area, and counts down each time that actor's turn starts.",
+      "terrainLabel": "Terrain",
+      "terrainNone": "None",
+      "terrainDifficult": "Difficult",
+      "terrainGreater": "Greater difficult",
+      "terrainHint": "Makes the area difficult terrain (each square costs 10 ft of movement on the ruler) or greater difficult (15 ft). Flying creatures are unaffected.",
+      "unlimited": "Unlimited",
+      "durationText": "{rounds} rounds ({mode})",
+      "expired": "The \"{name}\" area expired (its duration ran out).",
+      "effectsLabel": "Effects to apply",
+      "addEffect": "Add Effect",
+      "remove": "Remove this effect",
+      "noEffects": "No effects added yet.",
+      "place": "Place Area",
+      "placeHint": "Press Place, then click the map to drop the area (drag-draw direction is available for cones; mouse-wheel rotates).",
+      "defaultName": "Area",
+      "areasLabel": "Areas on this scene",
+      "tokensIn": "tokens inside",
+      "effectsShort": "effects",
+      "empty": "empty",
+      "noAreas": "No areas placed yet.",
+      "enable": "Enable area",
+      "disable": "Disable area",
+      "paused": "Paused",
+      "delete": "Delete area",
+      "deleteTitle": "Delete Area",
+      "deleteConfirm": "Delete \"{name}\"? All of its applied effects will be removed from tokens inside it.",
+      "pickTitle": "Choose an effect",
+      "searchPlaceholder": "Search effects...",
+      "searchEmpty": "No matching effects found.",
+      "cancel": "Cancel",
+      "privateLabel": "Private (only you and the GM see it in this window)",
+      "privateHint": "The area still appears on the scene; only its entry in this window is hidden from others.",
+      "privateBadge": "Private area",
+      "gmOnlyLabel": "GM only (hidden from players)",
+      "gmOnlyHint": "Players cannot see this area on the scene, but its effects still apply to them. Toggle it on or off at any time.",
+      "gmOnlyOn": "Make visible to players",
+      "gmOnlyOff": "Hide from players (GM only)",
+      "gmOnlyBadge": "Hidden from players (GM only)",
+      "notifyNotOwner": "You can only manage areas you created.",
+      "notifyNoGm": "No GM is connected, so \"{name}\" could not be applied.",
+      "notifyApplyFail": "Could not apply \"{name}\". Check the console (F12) for details.",
+      "notifyNoGmPlace": "No GM is connected, so the area could not be placed.",
+      "notifyPlaceFail": "The area could not be placed. Check the console (F12) for details."
+    },
+    "featureHub": {
+      "title": "Vibe Features",
+      "controlTitle": "Vibe Features",
+      "keybindName": "Open the Feature Hub window",
+      "keybindHint": "Reopens the Vibe Features hub window if it was closed.",
+      "toggleInvisibility": "Toggle Invisibility",
+      "noFeatures": "No enabled features are available."
+    },
+    "effectAutomator": {
+      "title": "Effect Automator",
+      "rulesLabel": "Rules",
+      "noRules": "No rules yet. Create one below.",
+      "newRule": "New Rule",
+      "editRule": "Edit Rule",
+      "triggerLabel": "Trigger",
+      "trigger": "Trigger",
+      "triggerTurnStart": "Turn start",
+      "triggerTurnEnd": "Turn end",
+      "triggerDamage": "On damage",
+      "sourceEffect": "Source effect (the item the actor must have)",
+      "noSource": "No source effect selected",
+      "pick": "Pick an effect",
+      "rollType": "Save",
+      "saveReflex": "Reflex",
+      "saveFortitude": "Fortitude",
+      "saveWill": "Will",
+      "dc": "DC",
+      "removeOnTrigger": "Remove on trigger",
+      "outcomesLabel": "Outcomes",
+      "noneOutcome": "Nothing",
+      "critSuccess": "Crit success",
+      "success": "Success",
+      "failure": "Failure",
+      "critFailure": "Crit failure",
+      "none": "nothing",
+      "save": "Save Rule",
+      "saveFailed": "Could not write the rules to effect-automations.json.",
+      "cancel": "Cancel",
+      "edit": "Edit rule",
+      "delete": "Delete rule",
+      "formHint": "Pick a source effect and configure its trigger, save and outcomes.",
+      "needSource": "Pick a source effect first.",
+      "pickSource": "Choose the source effect",
+      "pickOutcome": "Choose an outcome effect",
+      "searchPlaceholder": "Search effects..."
+    },
     "rollCounter": {
       "title": "Roll Counter",
       "tabAll": "All",
@@ -97,6 +230,11 @@
         "visible": "You are now visible to other players."
       }
     },
+    "lightTether": {
+      "notify": {
+        "removed": "Light on {target} expired — moved beyond {range} ft from {caster}"
+      }
+    },
     "settings": {
       "categories": {
         "template-effects": "Template Effects settings",
@@ -112,8 +250,13 @@
         "action-tracker": "Action Tracker settings",
         "roll-counter": "Roll Counter settings",
         "clear-turn-targets": "Clear Targets settings",
+        "area-effects": "Area Effects settings",
+        "feature-hub": "Feature Hub settings",
+        "effect-automator": "Effect Automator settings",
         "frightened-decay": "Frightened Decay settings",
-        "dying-automation": "Dying Automation settings"
+        "dying-automation": "Dying Automation settings",
+        "light-tether": "Light Tether settings",
+        "fixes": "Fixes"
       },
       "frightened-decay": {
         "enabled": {
@@ -137,6 +280,24 @@
         "enabled": {
           "name": "Enable Clear Targets at Turn End",
           "hint": "When a combatant's turn ends, everyone who controlled that combatant automatically loses all their current targets (the GM included), so leftover multi-target selections from AoE spells can't leak into later actions. Targets you set during other actors' turns are kept until your own turn finishes."
+        }
+      },
+      "area-effects": {
+        "enabled": {
+          "name": "Enable Area Effects",
+          "hint": "Opens a Persistent Area Effects window (toolbar button or Ctrl+Alt+A) where you choose a template shape and size, then place it on the map like a normal template. The placed area automatically applies the chosen PF2e spell effects to any token inside it."
+        }
+      },
+      "feature-hub": {
+        "enabled": {
+          "name": "Enable Feature Hub",
+          "hint": "Adds a Hub window (toolbar button or Ctrl+Alt+H) that lists the module's enabled features as buttons, so you can see what is available and open any of them in one click."
+        }
+      },
+      "effect-automator": {
+        "enabled": {
+          "name": "Enable Effect Automator",
+          "hint": "Automates effect items that roll a saving throw on a trigger (turn start, turn end, or when the actor takes damage) and applies other effects based on the degree of success. Rules are defined and edited in the Effect Automator window (Feature Hub, GM only) and stored as JSON in a world setting."
         }
       },
       "action-tracker": {
@@ -273,6 +434,18 @@
         "enabled": {
           "name": "Enable Effect-Apply Animations",
           "hint": "Plays an Automated Animations sequence when a \"Spell Effect: <spell>\" item lands on an actor. Damaging spells and spells with their own AA menu entry are skipped (AA already animates them); for everything else the spell's description is matched against AA's menus the same way the AAFA module used to (e.g. Leaden Steps plays the Slow animation). Requires the Automated Animations module."
+        }
+      },
+      "light-tether": {
+        "enabled": {
+          "name": "Enable Light Range Tether",
+          "hint": "When Spell Effect: Light is on a creature, the GM removes it automatically if that creature (or its caster) moves so the two are farther apart than the spell's range (120 ft). Both tokens must be on the same scene; otherwise the check is skipped. A chat message is posted when the effect expires."
+        }
+      },
+      "handlebars-fix": {
+        "enabled": {
+          "name": "Fix Broken Handlebars Helpers (Parlor compat)",
+          "hint": "Restores Foundry's variadic `or`/`and` Handlebars helpers after modules like Parlor overwrite them with 2-argument versions. PF2e's spell card needs `{{or a b c d}}` (4 args) for the Place template button — without this the button never renders."
         }
       }
     }

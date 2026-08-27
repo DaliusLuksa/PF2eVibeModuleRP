@@ -1,0 +1,273 @@
+/* Effect Automator editor window */
+.vibe-effect-automator {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  font-size: var(--font-size-13);
+}
+
+.ea-heading {
+  margin: 0.25rem 0 0.4rem;
+  font-size: var(--font-size-14);
+  border-bottom: 1px solid var(--color-border-light-2);
+  padding-bottom: 0.15rem;
+}
+
+/* Rules list */
+.ea-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.ea-rule {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  border: 1px solid var(--color-border-light-primary);
+  border-radius: 3px;
+  padding: 0.35rem 0.5rem;
+}
+
+.ea-rule-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.ea-rule-name {
+  font-weight: bold;
+}
+
+.ea-rule-meta,
+.ea-rule-outcomes {
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+}
+
+.ea-rule-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex: none;
+}
+
+.ea-empty {
+  color: var(--color-text-light-6);
+  font-style: italic;
+  margin: 0.25rem 0;
+}
+
+/* Form */
+.ea-form {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ea-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.ea-field > label {
+  font-weight: bold;
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+}
+
+.ea-source {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.ea-source input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ea-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.ea-row .ea-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.ea-rad {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  font-size: var(--font-size-12);
+}
+
+/* Outcomes — two rows (crit-success+success / failure+crit-failure). Headers stay
+   fixed; only each column's effect list scrolls, inside a fixed-height box. */
+.ea-outcomes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ea-outcomes-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+
+.ea-outcome {
+  border: 1px solid var(--color-border-light-primary);
+  border-radius: 3px;
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  /* Static height: headers stay put, only the list below scrolls */
+  height: 10rem;
+}
+
+.ea-outcome-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-12);
+  font-weight: bold;
+  flex: none;
+}
+
+.ea-outcome-effects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: var(--font-size-12);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ea-outcome-effects li {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ea-outcome-effects li span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ea-outcome-empty {
+  color: var(--color-text-light-6);
+  font-style: italic;
+}
+
+/* Buttons */
+.ea-btn {
+  width: 2em;
+  height: 1.7em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-13);
+  padding: 0;
+  border: 1px solid var(--color-border-light-2);
+  border-radius: 3px;
+  background: var(--color-surface-2);
+  cursor: pointer;
+  color: var(--color-text-light-4);
+}
+
+.ea-btn:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-light-1);
+}
+
+.ea-btn.danger:hover {
+  color: #c33;
+}
+
+.ea-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6em;
+  height: 1.4em;
+  border: 1px solid var(--color-border-light-2);
+  border-radius: 3px;
+  background: var(--color-surface-2);
+  cursor: pointer;
+  color: var(--color-text-hyperlink);
+}
+
+.ea-add:hover {
+  background: var(--color-surface-3);
+}
+
+.ea-save {
+  padding: 0.3rem 0.6rem;
+  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Text buttons (Cancel) — auto width, standard button look */
+.ea-cancel {
+  padding: 0.25rem 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border-light-2);
+  border-radius: 3px;
+  background: var(--color-surface-2);
+  cursor: pointer;
+  color: var(--color-text-light-4);
+}
+
+.ea-cancel:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-light-1);
+}
+
+.ea-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  /* Pin the action row to the bottom of the window */
+  margin-top: auto;
+}
+
+.ea-form-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.ea-form-empty p {
+  margin: 0;
+  color: var(--color-text-light-6);
+  font-style: italic;
+}

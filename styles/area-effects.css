@@ -1,0 +1,369 @@
+/* Persistent Area Effects window */
+.vibe-area-effects {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  font-size: var(--font-size-13);
+}
+
+/* Persistent / Instant tab bar (core nav.tabs styling applies) */
+.ae-tabs {
+  margin-bottom: 0.25rem;
+}
+
+.tab.ae-pane.active {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ae-heading {
+  margin: 0.25rem 0 0.4rem;
+  font-size: var(--font-size-14);
+  border-bottom: 1px solid var(--color-border-light-2);
+  padding-bottom: 0.15rem;
+}
+
+.ae-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ae-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+/* Shape / Size / Duration on a single row. */
+.ae-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.ae-row .ae-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.ae-field > label {
+  font-weight: bold;
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+}
+
+.ae-field input[type="text"],
+.ae-field input[type="number"],
+.ae-field select {
+  width: 100%;
+}
+
+.ae-size {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ae-size input[type="number"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.ae-unit {
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+}
+
+.ae-modes {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.ae-rad {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  font-size: var(--font-size-12);
+}
+
+.ae-hint {
+  margin: 0;
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+  font-style: italic;
+}
+
+/* Draft effect chips */
+.ae-effects {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+.ae-effect {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--color-border-light-primary);
+  border-radius: 3px;
+  background: var(--color-surface-2);
+}
+
+.ae-effect-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ae-remove {
+  flex: none;
+  width: 1.4em;
+  height: 1.4em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-light-6);
+  cursor: pointer;
+}
+
+.ae-remove:hover {
+  color: #c33;
+}
+
+.ae-effects-empty {
+  color: var(--color-text-light-6);
+  font-style: italic;
+  padding: 0.15rem;
+}
+
+.ae-add {
+  margin-top: 0.2rem;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.ae-place {
+  margin-top: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Existing areas list */
+.ae-areas {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--color-border-light-2);
+  padding-top: 0.5rem;
+}
+
+.ae-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  /* Show at least ~2 areas before scrolling, then scroll instead of growing
+     the window without bound. */
+  max-height: 17rem;
+  overflow-y: auto;
+}
+
+.ae-item {
+  border: 1px solid var(--color-border-light-primary);
+  border-radius: 3px;
+  padding: 0.35rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+/* Paused areas are clearly marked but stay fully interactive. The row's
+   background/name are dimmed to signal the pause, while the action buttons keep
+   full opacity so they can always be clicked to re-enable or delete. */
+.ae-item.disabled .ae-item-main {
+  opacity: 0.55;
+}
+
+.ae-item.disabled .ae-item-actions,
+.ae-item.disabled .ae-item-actions .ae-btn {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.ae-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.ae-item-name {
+  font-weight: bold;
+}
+
+.ae-item-paused {
+  color: var(--color-text-light-6);
+  font-style: italic;
+  font-size: var(--font-size-12);
+  font-weight: normal;
+}
+
+.ae-private {
+  color: var(--color-text-light-4);
+  font-size: var(--font-size-11);
+}
+
+.ae-item-meta {
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+}
+
+.ae-terrain {
+  color: var(--color-text-dark-primary, #b3722f);
+  font-weight: bold;
+}
+
+.ae-item-modes {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: var(--font-size-12);
+}
+
+.ae-item-effects {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 0.5rem;
+  font-size: var(--font-size-12);
+  color: var(--color-text-light-4);
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.ae-item-actions {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+}
+
+.ae-btn {
+  width: 2em;
+  height: 1.7em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-13);
+  padding: 0;
+  border: 1px solid var(--color-border-light-2);
+  border-radius: 3px;
+  background: var(--color-surface-2);
+  cursor: pointer;
+  color: var(--color-text-light-4);
+}
+
+.ae-btn:hover {
+  background: var(--color-surface-3);
+  border-color: var(--color-border-light-1);
+  color: var(--color-text-light-1);
+}
+
+.ae-btn.danger:hover {
+  color: #c33;
+}
+
+.ae-empty {
+  color: var(--color-text-light-6);
+  font-style: italic;
+  margin: 0.25rem 0;
+}
+
+/* Effect picker dialog */
+.vibe-effect-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 28rem;
+}
+
+.vibe-effect-picker input[type="text"] {
+  width: 100%;
+}
+
+.vibe-picker-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  border: 1px solid var(--color-border-light-primary);
+  border-radius: 3px;
+}
+
+.vibe-picker-results button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.2rem 0.35rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vibe-picker-results button:hover {
+  background: var(--color-surface-2);
+}
+
+.vibe-picker-results img {
+  width: 1.6em;
+  height: 1.6em;
+  object-fit: cover;
+  flex: none;
+  border: 1px solid var(--color-border-light-2);
+  border-radius: 2px;
+}
+
+.vibe-picker-results span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vibe-picker-empty {
+  padding: 0.4rem;
+  color: var(--color-text-light-6);
+  font-style: italic;
+  text-align: center;
+  list-style: none;
+}

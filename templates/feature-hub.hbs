@@ -1,0 +1,16 @@
+<section class="vibe-feature-hub">
+    {{#if features.length}}
+    <ul class="fh-list">
+        {{#each features}}
+        <li>
+            <button type="button" class="fh-button" data-action="openFeature" data-id="{{this.id}}">
+                <i class="fh-icon {{this.icon}}"></i>
+                <span class="fh-title">{{this.title}}</span>
+            </button>
+        </li>
+        {{/each}}
+    </ul>
+    {{else}}
+    <p class="fh-empty">{{@root.i18n 'noFeatures'}}</p>
+    {{/if}}
+</section>
