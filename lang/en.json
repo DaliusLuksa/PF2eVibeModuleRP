@@ -46,6 +46,8 @@
       "enable": "Enable",
       "manual": "Manual adjustment",
       "move": "Move ({distance} ft)",
+      "warpMove": "Warp Step - Move ({distance} ft)",
+      "warpFree": "Free - Warp Step",
       "toggleTooltip": "Toggle the Action Tracker window",
       "keybindName": "Open the Action Tracker window",
       "keybindHint": "Reopens the Action Tracker window if it was closed."
@@ -235,6 +237,18 @@
         "removed": "Light on {target} expired — moved beyond {range} ft from {caster}"
       }
     },
+    "monkFlurry": {
+      "keybindName": "Flurry of Blows (Monk)",
+      "keybindHint": "Controlled monk makes Flurry of Blows against the targeted creature.",
+      "notify": {
+        "disabled": "Monk Flurry is disabled in module settings.",
+        "oneToken": "Select exactly one token (your monk).",
+        "notMonk": "Only monks can use Flurry of Blows.",
+        "oneTarget": "Target exactly one creature for Flurry of Blows.",
+        "flourish": "Flurry of Blows can be used only once per turn (flourish).",
+        "noGm": "No GM connected — could not apply condition to {name}."
+      }
+    },
     "settings": {
       "categories": {
         "template-effects": "Template Effects settings",
@@ -256,7 +270,10 @@
         "frightened-decay": "Frightened Decay settings",
         "dying-automation": "Dying Automation settings",
         "light-tether": "Light Tether settings",
-        "fixes": "Fixes"
+        "flanking-offguard": "Flanking settings",
+        "monk-flurry": "Monk Flurry settings",
+        "fixes": "Fixes",
+        "instant-hidden-rolls": "Dice So Nice Tweaks"
       },
       "frightened-decay": {
         "enabled": {
@@ -442,12 +459,34 @@
           "hint": "When Spell Effect: Light is on a creature, the GM removes it automatically if that creature (or its caster) moves so the two are farther apart than the spell's range (120 ft). Both tokens must be on the same scene; otherwise the check is skipped. A chat message is posted when the effect expires."
         }
       },
-      "handlebars-fix": {
+      "flanking-offguard": {
         "enabled": {
-          "name": "Fix Broken Handlebars Helpers (Parlor compat)",
-          "hint": "Restores Foundry's variadic `or`/`and` Handlebars helpers after modules like Parlor overwrite them with 2-argument versions. PF2e's spell card needs `{{or a b c d}}` (4 args) for the Place template button — without this the button never renders."
+          "name": "Enable Flanking Off-Guard Automation",
+          "hint": "When a combatant in the active encounter is flanked (two enemies on opposite sides, using the same rule the system uses for attack rolls), the GM automatically adds Off-Guard and removes it the instant the creature is no longer flanked. Only tokens in the current combat are checked, at the destination of each move before the walking animation finishes. Creatures that already have a manually applied Off-Guard are left alone."
+        },
+        "allow90Degree": {
+          "name": "Allow 90-Degree Flanks (House Rule)",
+          "hint": "When on, flanking also counts when the two attackers are on adjacent (perpendicular) sides — 90° as well as the normal 180° opposite. Off by default (strict PF2e rules: only opposite sides)."
         }
-      }
+      },
+        "handlebars-fix": {
+          "enabled": {
+            "name": "Fix Broken Handlebars Helpers (Parlor compat)",
+            "hint": "Restores Foundry's variadic `or`/`and` Handlebars helpers after modules like Parlor overwrite them with 2-argument versions. PF2e's spell card needs `{{or a b c d}}` (4 args) for the Place template button — without this the button never renders."
+          }
+        },
+        "instant-hidden-rolls": {
+          "enabled": {
+            "name": "Instant Hidden GM Rolls (No 3D Dice)",
+            "hint": "When the GM makes a hidden roll (GM Roll, Blind Roll, or Self Roll), skip Dice So Nice 3D dice entirely and show the chat result instantly. Public GM rolls and all player rolls still play their normal 3D animation. Requires Dice So Nice."
+          }
+        },
+        "monk-flurry": {
+          "enabled": {
+            "name": "Enable Monk Flurry Automation",
+            "hint": "Adds the Flurry of Blows macro (Ctrl+Alt+F or Feature Hub) for monks: rolls two Wolf Jaws/Fist Strikes with MAP, combines damage, rolls the Stunning Blows Fort save with incapacitation, and does Wolf Stance trip attempts when flanking (90-degree house rule). Flourish: once per turn."
+          }
+        }
     }
   }
 }

@@ -53,6 +53,14 @@ export class ActionTrackerTool {
 		// combatant only moves, so repeated moves merge into one entry. Reset on
 		// turn change and whenever any non-move action is logged.
 		movement: null,
+		// Warp Step free-stride tracking: same merging rules as `movement` but
+		// for the 2 free Strides granted by Spell Effect: Warp Step. `warpUsed`
+		// counts how many free Stride actions have been consumed this turn (0-2);
+		// `warpMovement` is the current consecutive free-move chain so repeated
+		// free strides merge into one "Warp Step - Move (X ft)" entry. Both are
+		// reset on turn change and `warpMovement` is also cleared on any non-move.
+		warpMovement: null,
+		warpUsed: 0,
 		// Combatant affiliation/control (GM-driven per turn). Player clients only
 		// render the full window for party members; `hideAll` narrows that further.
 		friendly: false,
@@ -166,6 +174,8 @@ export class ActionTrackerTool {
 			used: 0,
 			entries: [],
 			movement: null,
+			warpMovement: null,
+			warpUsed: 0,
 			// Whether this combatant is on the players' side (pf2e alliance
 			// "party") and is actually owned by a non-GM player. Non-party
 			// combatants are hidden on player clients ("Enemy's turn"); when the
@@ -200,6 +210,8 @@ export class ActionTrackerTool {
 		}
 		if (saved?.active && saved.combatantId === combatant?.id) {
 			saved.movement ??= null;
+			saved.warpMovement ??= null;
+			saved.warpUsed ??= 0;
 			saved.combatId ??= game.combat?.id ?? null;
 			saved.hideAll ??= false;
 			saved.disabled ??= false;
@@ -243,6 +255,13 @@ export class ActionTrackerTool {
 		const context = flags.context ?? {};
 		const type = context.type ?? "";
 
+		// pf2e `treatWoundsMacroCallback`Posts the healing roll as a separate
+		// ChatMessage that **copies** the original `context` (so it still looks
+		// like `skill-check:medicine`) but sets `origin.messageId` to the
+		// parent check's id. That copy must not be counted as a second action —
+		// otherwise Battle Medicine / Treat Wounds logs 2× Medicine.
+		if (flags.origin?.messageId) return;
+
 		// "Apply Effect" cards (e.g. Raise a Shield, Channel Elements): the card
 		// identifies its action/feat item via context.item and has no origin, and
 		// clicking the button applies the effect without posting another message,
@@ -278,20 +297,54 @@ export class ActionTrackerTool {
 			try {
 				item = fromUuidSync(origin.uuid) ?? null;
 			} catch (error) {
-				console.debug(`${Manager.id} | action-tracker could not resolve origin uuid`, error);
+				// ignore
+			}
+			if (!item) {
+				try {
+					item = await fromUuid(origin.uuid);
+				} catch (error) {
+					// ignore
+				}
 			}
 		}
-		const cost = this._resolveCost(item, type);
+		// Bard Helper spell cards clone the spell via `spell.clone()` before
+		// `toMessage()` — the clone's `getOriginData()` can produce `uuid: null`.
+		// Fall back to resolving the live actor spell by parsing the card's
+		// `<h3>` (spell name) so Courageous Anthem still counts.
+		if (!item && speaker) {
+			try {
+				if (origin?.slug) {
+					item = speaker.itemTypes?.spell?.find?.((s) => s.slug === origin.slug) ?? null;
+				}
+				if (!item && origin?.name) {
+					item = speaker.itemTypes?.spell?.find?.((s) => s.name === origin.name) ?? null;
+				}
+				if (!item) {
+					const div = document.createElement("div");
+					div.innerHTML = message.content ?? "";
+					const h3 = div.querySelector("h3")?.textContent?.trim() ?? "";
+					const h3Name = h3.replace(/\s*\d+\s*$/, "").trim();
+					if (h3Name) {
+						item = speaker.itemTypes?.spell?.find?.((s) => s.name === h3Name) ?? speaker.itemTypes?.spell?.find?.((s) => s.name.toLowerCase() === h3Name.toLowerCase()) ?? null;
+					}
+				}
+			} catch (error) {
+				// ignore
+			}
+		}
+		const cost = this._resolveCost(item, type, context.title, context.options);
 		if (cost === null) return;
 
 		const isSpell = !!item?.isOfType?.("spell");
+		let spellKey = null;
 		if (isSpell) {
-			if (this._countedSpellUuids.has(origin.uuid)) return;
-			this._countedSpellUuids.add(origin.uuid);
+			spellKey = origin?.uuid ?? item?.slug ?? "unknown-spell";
+			if (this._countedSpellUuids.has(spellKey)) return;
+			this._countedSpellUuids.add(spellKey);
 		}
 
 		const name = this._resolveName(item, context, type);
-		this._push({ name, cost, icon: this._iconFor(item, type) });
+		this._push({ name, cost, icon: this._iconFor(item, type, context.title, context.options), ...(spellKey ? { spellKey } : {}) });
 	}
 
 	/**
@@ -303,6 +356,13 @@ export class ActionTrackerTool {
 	 * cumulative entry (see the `movement` chain in `_state`); any other action
 	 * breaks the chain. Forced/teleported moves (the `displace`/`blink`
 	 * movement actions) and non-finite/zero costs are ignored.
+	 *
+	 * Warp Step: if the current combatant has `Spell Effect: Warp Step` on
+	 * itself, the first two Stride (walk) actions each turn are free. Free
+	 * strides use the same terrain-aware cost but are logged as separate
+	 * 0-cost "Warp Step - Move (N ft)" entries that merge consecutively just
+	 * like normal moves, and break on any non-move action. After the 2 free
+	 * strides are spent, further walk moves cost normally.
 	 */
 	static _onTokenMove(token, movement) {
 		if (!game.user.isGM) return;
@@ -320,24 +380,112 @@ export class ActionTrackerTool {
 		const speed = this._movementSpeed(actor, action);
 		if (typeof speed !== "number" || speed <= 0) return;
 
-		const cost = Number.isFinite(movement.passed.cost) && movement.passed.cost > 0
+		let cost = Number.isFinite(movement.passed.cost) && movement.passed.cost > 0
 			? movement.passed.cost
 			: movement.passed.distance;
 		if (!Number.isFinite(cost) || cost <= 0) return;
+		// Snap to 5-ft increments to hide floating-point drift from the ruler
+		// (e.g. 6 / 17 inside/outside difficult terrain → 5 / 15).
+		cost = Math.round(cost / 5) * 5;
 
+		const distanceRaw = movement.passed.distance ?? cost;
+		// Keep distanceRaw snapped as well when we split proportionally.
+		const snappedDistanceRaw = Math.round((distanceRaw) / 5) * 5;
+
+		// Warp Step free strides: only normal Stride ("walk") while the effect
+		// is present and free budget remains (2 × Speed feet of cost, matching
+		// two Strides). Other movement types (step, fly etc.) always cost normally.
+		// Budget is measured in cost (terrain-aware), so a 10-ft incremental
+		// Stride and a single 60-ft drag consume the same budget.
+		if (action === "walk" && this._hasWarpStep(actor)) {
+			const budget = 2 * speed;
+			const warpChain = this._state.warpMovement ?? { totalCost: 0, totalDistance: 0, actions: 0 };
+			const oldCost = warpChain.totalCost;
+			if (oldCost < budget) {
+				const newTotalCost = oldCost + cost;
+				const newTotalDistance = warpChain.totalDistance + snappedDistanceRaw;
+
+				// Entirely within the free budget (e.g. 60 ft instant or 10+10... up to 60)
+				// Display is terrain-aware cost (10 per difficult square, 15 per greater),
+				// so the label matches the ruler's cost, not the geometric distance.
+				// Snap the label to 5 ft to hide ruler float drift (6 → 5, 17 → 15).
+				if (newTotalCost <= budget) {
+					warpChain.totalCost = newTotalCost;
+					warpChain.totalDistance = newTotalDistance;
+					warpChain.actions = Math.clamp(Math.ceil(newTotalCost / speed), 1, 3);
+					this._state.warpMovement = warpChain;
+					this._state.warpUsed = warpChain.actions;
+
+					const distance = Math.round(warpChain.totalCost / 5) * 5;
+					const icon = { fa: "fa-wind" };
+					const last = this._state.entries.at(-1);
+					if (last?.warpMove) {
+						last.name = this._warpMoveName(distance);
+						last.warpActions = warpChain.actions;
+					} else {
+						this._state.entries.push({ name: this._warpMoveName(distance), cost: 0, icon, warpMove: true, warpActions: warpChain.actions });
+					}
+					this._broadcast();
+					return;
+				}
+
+				// Straddles the budget: part free (up to budget), remainder paid.
+				// This happens when a single drag would cross the 60-ft line (e.g.
+				// 50 free + 20 drag = 10 free + 10 paid).
+				if (oldCost < budget && newTotalCost > budget) {
+					const freeCostThisMove = budget - oldCost;
+					const paidCostThisMove = cost - freeCostThisMove;
+					// For the display we keep cost, so split is direct (no distance proportion needed).
+					const freeDistThisMove = cost > 0 ? (freeCostThisMove / cost) * snappedDistanceRaw : 0;
+					const paidDistThisMove = snappedDistanceRaw - freeDistThisMove;
+
+					// Close the free entry at the budget
+					warpChain.totalCost = budget;
+					warpChain.totalDistance = warpChain.totalDistance + freeDistThisMove;
+					warpChain.actions = 2;
+					this._state.warpMovement = warpChain;
+					this._state.warpUsed = 2;
+					const freeDistance = Math.round(warpChain.totalCost / 5) * 5;
+					const last = this._state.entries.at(-1);
+					if (last?.warpMove) {
+						last.name = this._warpMoveName(freeDistance);
+						last.warpActions = 2;
+					} else {
+						this._state.entries.push({ name: this._warpMoveName(freeDistance), cost: 0, icon: { fa: "fa-wind" }, warpMove: true, warpActions: 2 });
+					}
+
+					// Remainder becomes a normal paid move (starts/extends the paid chain)
+					const paidChain = this._state.movement ?? { totalCost: 0, totalDistance: 0, actions: 0 };
+					paidChain.totalCost += paidCostThisMove;
+					paidChain.totalDistance += paidDistThisMove;
+					const newPaidActions = Math.clamp(Math.ceil(paidChain.totalCost / speed), 1, 3);
+					paidChain.actions = newPaidActions;
+					this._state.movement = paidChain;
+					const paidDistance = Math.round(paidChain.totalCost / 5) * 5;
+					const paidIcon = { fa: this._movementIcon(action) };
+					this._state.entries.push({ name: this._moveName(paidDistance), cost: newPaidActions, icon: paidIcon, move: true });
+					this._state.used += newPaidActions;
+					this._broadcast();
+					return;
+				}
+			}
+			// oldCost >= budget → no free budget left, fall through to paid handling
+		}
+
+		// Normal paid movement (or warp budget exhausted / ineligible type)
 		// Consecutive moves merge into a single cumulative entry: track the total
 		// measured cost and distance during the chain and derive the action cost
 		// from the total (same clamp as the token ruler). Any non-move action
 		// resets `movement`, so a later move starts a fresh entry.
 		const chain = this._state.movement ?? { totalCost: 0, totalDistance: 0, actions: 0 };
 		chain.totalCost += cost;
-		chain.totalDistance += movement.passed.distance ?? cost;
+		chain.totalDistance += snappedDistanceRaw;
 		const newActions = Math.clamp(Math.ceil(chain.totalCost / speed), 1, 3);
 		const diff = newActions - chain.actions;
 		chain.actions = newActions;
 		this._state.movement = chain;
 
-		const distance = Math.round(chain.totalDistance);
+		const distance = Math.round(chain.totalCost / 5) * 5;
 		const icon = { fa: this._movementIcon(action) };
 		const last = this._state.entries.at(-1);
 		if (last?.move) {
@@ -353,6 +501,27 @@ export class ActionTrackerTool {
 
 	static _moveName(distance) {
 		return Manager.localize("actionTracker.move", { distance });
+	}
+
+	static _warpMoveName(distance) {
+		return Manager.localize("actionTracker.warpMove", { distance });
+	}
+
+	/** True when `actor` has Spell Effect: Warp Step (the 2 free Strides). */
+	static _hasWarpStep(actor) {
+		if (!actor) return false;
+		const effects = actor.itemTypes?.effect ?? [];
+		for (const e of effects) {
+			if (e.slug === "spell-effect-warp-step") return true;
+			if (e.system?.slug === "spell-effect-warp-step") return true;
+			if (e.name === "Spell Effect: Warp Step") return true;
+			// Compendium source check covers migrated and unmigrated forms
+			const src = e.flags?.pf2e?.compendiumSource ?? e._stats?.compendiumSource ?? "";
+			if (typeof src === "string" && src.includes("9Tl9jGUKoj0wS73d")) return true;
+			const sid = e.sourceId ?? e._source?.sourceId ?? "";
+			if (typeof sid === "string" && sid.includes("9Tl9jGUKoj0wS73d")) return true;
+		}
+		return false;
 	}
 
 	/**
@@ -389,14 +558,30 @@ export class ActionTrackerTool {
 	}
 
 	/** Return the action cost (number) or null when the message is not an action. */
-	static _resolveCost(item, type) {
+	static _resolveCost(item, type, title = "", options = null) {
 		if (item?.isOfType?.("spell")) return this._spellCost(item.system?.time?.value);
 		if (item && typeof item.actionCost === "object" && item.actionCost) {
 			const ac = item.actionCost;
 			return ac.type === "action" ? (ac.value ?? 1) : 0;
 		}
 		if (type === "attack-roll") return 1;
-		if (type === "skill-check" || type === "perception-check") return 1;
+		if (type === "skill-check" || type === "perception-check") {
+			// pf2e-bard-helper Lingering Composition (and similar free Perform
+			// checks) are `skill-check:performance` with cost 0 but ride the
+			// generic skill-check path. The rendered header.hbs still carries the
+			// action-glyph (F/R) — use it to return 0 instead of the default 1.
+			// Also hard-match Lingering Composition by name as a safety net.
+			if (typeof title === "string" && title.includes("action-glyph")) {
+				const m = title.match(/action-glyph[^>]*>([^<]+)</);
+				if (m) {
+					const g = m[1].trim();
+					if (g === "F" || g === "R") return 0;
+					if (/^\d+$/.test(g)) return Math.min(Number(g), 3);
+				}
+			}
+			if (typeof title === "string" && /Lingering Composition/i.test(title)) return 0;
+			return 1;
+		}
 		return null;
 	}
 
@@ -404,8 +589,13 @@ export class ActionTrackerTool {
 	 * Pick the per-entry icon: `{ img }` (spell artwork) or `{ fa }` (Font Awesome
 	 * class). Spells always show their own item image; everything else falls back
 	 * to category defaults (sword/bow/fist, star, bolt, person-running, dice-d20).
+	 * For `simpleRollActionCheck` actions (Demoralize, etc.) the roll title is the
+	 * rendered header.hbs HTML — those are actions, not plain skill checks, so
+	 * they get `fa-star` instead of the generic `fa-dice-d20`. The same applies
+	 * to Treat Wounds / Battle Medicine and Seek etc. which carry
+	 * `action:<slug>` in `context.options`.
 	 */
-	static _iconFor(item, type) {
+	static _iconFor(item, type, title = "", options = null) {
 		if (item?.isOfType?.("spell")) return { img: item.img };
 		if (item?.isOfType?.("weapon", "melee")) {
 			const unarmed = item.system?.category === "unarmed" || item.system?.traits?.value?.includes?.("unarmed");
@@ -414,7 +604,13 @@ export class ActionTrackerTool {
 		}
 		if (item && typeof item.actionCost === "object" && item.actionCost) return { fa: "fa-star" };
 		if (type === "attack-roll") return { fa: "fa-sword" };
-		if (type === "skill-check" || type === "perception-check") return { fa: "fa-dice-d20" };
+		if (type === "skill-check" || type === "perception-check") {
+			if (typeof title === "string" && title.includes("<")) return { fa: "fa-star" };
+			if (Array.isArray(options) || options instanceof Set) {
+				for (const o of options) if (String(o).startsWith("action:")) return { fa: "fa-star" };
+			}
+			return { fa: "fa-dice-d20" };
+		}
 		return { fa: "fa-star" };
 	}
 
@@ -430,10 +626,30 @@ export class ActionTrackerTool {
 
 	static _resolveName(item, context, type) {
 		if (item?.name) return item.name;
-		const title = context.title ?? "";
+		let title = context.title ?? "";
 		if (title) {
-			const localized = game.i18n.localize(title);
-			return (localized && localized !== title) ? localized : title;
+			// pf2e `simpleRollActionCheck` (Demoralize, etc.) stores the rendered
+			// header.hbs HTML as the roll title, e.g.
+			// `<h4 class="action"><strong>Demoralize</strong><span class="action-glyph">1</span>...`
+			// which previously leaked verbatim into the tracker. Strip the markup
+			// like pf2e's own CheckModifiersDialog does.
+			if (typeof title === "string" && title.includes("<")) {
+				try {
+					const div = document.createElement("div");
+					div.innerHTML = title;
+					div.querySelector(".action-glyph")?.remove();
+					div.querySelector(".pf2-icon")?.remove();
+					const text = div.textContent?.trim().replace(/\s+/g, " ");
+					if (text) title = text;
+					else title = title.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+				} catch {
+					title = title.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+				}
+			}
+			if (title) {
+				const localized = game.i18n.localize(title);
+				return (localized && localized !== title) ? localized : title;
+			}
 		}
 		return type || "Action";
 	}
@@ -549,6 +765,7 @@ export class ActionTrackerTool {
 		this._state.entries.push(entry);
 		this._state.used += entry.cost;
 		this._state.movement = null;
+		this._state.warpMovement = null;
 		this._broadcast();
 	}
 
@@ -566,6 +783,7 @@ export class ActionTrackerTool {
 		if (!game.user.isGM || !this._state.active) return;
 		this._state.entries.push({ name: Manager.localize("actionTracker.reaction"), cost: 0, icon: { fa: "fa-person-running" } });
 		this._state.movement = null;
+		this._state.warpMovement = null;
 		this._broadcast();
 	}
 
@@ -575,6 +793,12 @@ export class ActionTrackerTool {
 		if (entry) {
 			this._state.used = Math.max(0, this._state.used - entry.cost);
 			if (entry.move) this._state.movement = null;
+			if (entry.warpMove) {
+				const warpActions = this._state.warpMovement?.actions ?? entry.warpActions ?? 1;
+				this._state.warpUsed = Math.max(0, (this._state.warpUsed ?? 0) - warpActions);
+				this._state.warpMovement = null;
+			}
+			if (entry.spellKey) this._countedSpellUuids.delete(entry.spellKey);
 		}
 		this._broadcast();
 	}
@@ -598,6 +822,8 @@ export class ActionTrackerTool {
 			this._state.entries = [];
 			this._state.used = 0;
 			this._state.movement = null;
+			this._state.warpMovement = null;
+			this._state.warpUsed = 0;
 		}
 		this._broadcast();
 	}
@@ -707,5 +933,13 @@ class ActionTrackerWindow extends rememberWindowPosition(
 
 	_prepareContext(options) {
 		return ActionTrackerTool._context();
+	}
+
+	async _onRender(context, options) {
+		await super._onRender(context, options);
+		const log = this.element?.querySelector?.(".at-log");
+		if (!log) return;
+		log.scrollTop = log.scrollHeight;
+		requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
 	}
 }

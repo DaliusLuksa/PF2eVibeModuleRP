@@ -21,10 +21,13 @@ import { AreaEffectsTool } from "./tools/area-effects.js";
 import { FeatureHubTool } from "./tools/feature-hub.js";
 import { EffectAutomatorTool } from "./tools/effect-automator.js";
 import { LightTetherTool } from "./tools/light-tether.js";
+import { FlankingOffGuardTool } from "./tools/flanking-offguard.js";
 import { HandlebarsFixTool } from "./tools/handlebars-fix.js";
+import { InstantHiddenRollsTool } from "./tools/instant-hidden-rolls.js";
+import { MonkFlurryTool } from "./tools/monk-flurry.js";
 
 Hooks.once("init", () => {
-	Manager.register(TemplateEffectsTool).register(ShieldedArmTool).register(CalmEffectsTool).register(InvisibleTokenTool).register(HideCursorTool).register(SpellShieldTrackerTool).register(AttributeRollTool).register(PopoutInitiativeTool).register(PopoutSortableRepairTool).register(VolumePersistenceTool).register(SustainReminderTool).register(EffectAnimationTool).register(ActionTrackerTool).register(RollCounterTool).register(ClearTurnTargetsTool).register(FrightenedDecayTool).register(DyingAutomationTool).register(ShatteringGemTool).register(AreaEffectsTool).register(FeatureHubTool).register(EffectAutomatorTool).register(LightTetherTool).register(HandlebarsFixTool).registerSettings();
+	Manager.register(TemplateEffectsTool).register(ShieldedArmTool).register(CalmEffectsTool).register(InvisibleTokenTool).register(HideCursorTool).register(SpellShieldTrackerTool).register(AttributeRollTool).register(PopoutInitiativeTool).register(PopoutSortableRepairTool).register(VolumePersistenceTool).register(SustainReminderTool).register(EffectAnimationTool).register(ActionTrackerTool).register(RollCounterTool).register(ClearTurnTargetsTool).register(FrightenedDecayTool).register(DyingAutomationTool).register(ShatteringGemTool).register(AreaEffectsTool).register(FeatureHubTool).register(EffectAutomatorTool).register(LightTetherTool).register(FlankingOffGuardTool).register(HandlebarsFixTool).register(InstantHiddenRollsTool).register(MonkFlurryTool).registerSettings();
 	Manager.initialize();
 	Manager.boot();
 });

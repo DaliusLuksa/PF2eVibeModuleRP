@@ -24,9 +24,9 @@
 
     <ol class="at-log">
         {{#each entries}}
-        <li class="at-entry">
+        <li class="at-entry {{#if warpMove}}at-warp{{/if}}">
             <span class="at-cost">{{cost}}</span>
-            {{#if icon.img}}<img class="at-icon at-icon-img" src="{{icon.img}}" alt="" data-tooltip="{{cost}} {{@root.i18n 'actions'}}">{{else}}<i class="at-icon fa-solid {{icon.fa}}" data-tooltip="{{cost}} {{@root.i18n 'actions'}}"></i>{{/if}}
+            {{#if icon.img}}<img class="at-icon at-icon-img" src="{{icon.img}}" alt="" data-tooltip="{{#if warpMove}}{{@root.i18n 'warpFree'}}{{else}}{{cost}} {{@root.i18n 'actions'}}{{/if}}">{{else}}<i class="at-icon fa-solid {{icon.fa}}" data-tooltip="{{#if warpMove}}{{@root.i18n 'warpFree'}}{{else}}{{cost}} {{@root.i18n 'actions'}}{{/if}}"></i>{{/if}}
             <span class="at-name">{{name}}</span>
         </li>
         {{else}}

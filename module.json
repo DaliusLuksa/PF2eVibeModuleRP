@@ -1,7 +1,7 @@
 {
   "id": "pf2e-vibemodulerp",
   "title": "PF2e VibeModuleRP",
-  "version": "1.25.1",
+  "version": "1.28.0",
   "compatibility": {
     "minimum": "12",
     "verified": "14.365"
@@ -52,6 +52,14 @@
       "type": "Item",
       "system": "pf2e",
       "private": false
+    },
+    {
+      "label": "Monk Flurry Macro",
+      "name": "monk-flurry-macro",
+      "path": "packs/monk-flurry-macro.db",
+      "type": "Macro",
+      "system": "pf2e",
+      "private": false
     }
   ],
   "esmodules": [
@@ -65,7 +73,8 @@
     "styles/roll-counter.css",
     "styles/area-effects.css",
     "styles/feature-hub.css",
-    "styles/effect-automator.css"
+    "styles/effect-automator.css",
+    "styles/monk-flurry.css"
   ],
   "languages": [
     {

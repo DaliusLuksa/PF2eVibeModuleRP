@@ -177,3 +177,18 @@
   padding: 0.2rem 0.75rem;
   font-style: normal;
 }
+
+/* Warp Step free strides: 0-cost but shown separately. */
+.at-warp .at-cost {
+  color: var(--color-text-dark-secondary);
+  font-style: italic;
+}
+
+.at-warp .at-icon {
+  color: #5a8fd4;
+}
+
+.at-warp .at-name {
+  font-style: italic;
+  color: var(--color-text-dark-secondary);
+}
