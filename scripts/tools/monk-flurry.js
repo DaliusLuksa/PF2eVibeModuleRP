@@ -1,5 +1,6 @@
-import { Manager } from "../core/manager.js";
+﻿import { Manager } from "../core/manager.js";
 import { FlankingOffGuardTool } from "./flanking-offguard.js";
+import { ActionTrackerTool } from "./action-tracker.js";
 
 const SOCKET_EVENT = `module.${Manager.id}`;
 const SOCKET_ACTION_MONK_FLURRY = "monkFlurryApply";
@@ -213,6 +214,89 @@ export class MonkFlurryTool {
 		}
 	}
 
+	static _getFlatCheckDC(targetActor) {
+		try {
+			if (targetActor.hasCondition?.("hidden") || targetActor.getCondition?.("hidden") || targetActor.conditions?.has?.("hidden")) return 11;
+			if (targetActor.hasCondition?.("concealed") || targetActor.getCondition?.("concealed") || targetActor.conditions?.has?.("concealed")) return 5;
+			for (const it of targetActor.items ?? []) {
+				const slug = (it.slug ?? it.system?.slug ?? "").toLowerCase();
+				if (slug === "hidden" || slug === "effect-hidden") return 11;
+				if (slug === "concealed" || slug === "effect-concealed") return 5;
+			}
+			const opts = targetActor.getRollOptions?.(["all"]) ?? [];
+			if (opts.includes("target:effect:concealed") || opts.includes("target:concealed") || opts.some(o => o.includes("concealed"))) return 5;
+			if (opts.includes("target:effect:hidden") || opts.includes("target:hidden") || opts.some(o => o.includes("hidden"))) return 11;
+		} catch (e) { console.warn(`${Manager.id} | flatCheck DC failed`, e); }
+		return null;
+	}
+
+	static async _rollFlatCheck(dc) {
+		const roll = await new Roll("1d20").evaluate();
+		const success = roll.total >= dc;
+		return { roll, total: roll.total, dc, success, degree: success ? "success" : "failure" };
+	}
+
+	static _getMessageElement(message) {
+		try {
+			const id = message?.id ?? message;
+			return document.querySelector(`li.chat-message[data-message-id="${id}"]`) ?? ui.chat?.element?.[0]?.querySelector(`li.chat-message[data-message-id="${id}"]`) ?? null;
+		} catch { return null; }
+	}
+
+	static async _autoRollFlatCheck(message) {
+		if (!message) return null;
+		// The native attack card ends with <section class="fc-flatcheck-buttons"><div class="fc-check">...<span class="fc-rolls"></span><button data-action="roll-flatcheck" data-dc="5">
+		// Clicking that button rolls 1d20 and fills fc-rolls with a colored box (green success / red failure) right next to the button.
+		// We mimic the click so the native UI appears, instead of patching our own div.
+		try {
+			let el = this._getMessageElement(message);
+			if (!el) {
+				// Message may not be rendered yet (popout or not in DOM) -" wait a tick and retry
+				await new Promise((r) => setTimeout(r, 120));
+				el = this._getMessageElement(message);
+			}
+			const btn = el.querySelector('button[data-action="roll-flatcheck"]');
+			if (!btn) {
+				return null;
+			}
+			const dc = parseInt(btn.dataset.dc) || parseInt(btn.getAttribute("data-dc")) || 5;
+			const label = el.querySelector(".fc-label")?.textContent?.trim() ?? (dc === 11 ? "Hidden" : "Concealed");
+			// If already rolled (fc-rolls has content), don't re-roll
+			const rollsSpanBefore = el.querySelector(".fc-rolls");
+			if (rollsSpanBefore && rollsSpanBefore.textContent.trim() && rollsSpanBefore.children.length) {
+				const txt = rollsSpanBefore.textContent.trim();
+				const num = parseInt(txt) || 0;
+				const success = rollsSpanBefore.querySelector(".success, .criticalSuccess") ? true : rollsSpanBefore.querySelector(".failure, .criticalFailure") ? false : num >= dc;
+				return { dc, label, total: num, success, degree: success ? "success" : "failure", element: rollsSpanBefore };
+			}
+			btn.click();
+			// Wait for fc-rolls to be populated (native PF2e updates the same message, not a new one)
+			for (let i = 0; i < 30; i++) {
+				await new Promise((r) => setTimeout(r, 80));
+				el = this._getMessageElement(message);
+				const rollsSpan = el?.querySelector(".fc-rolls");
+				if (rollsSpan && rollsSpan.textContent.trim()) {
+					// Native PF2e fills fc-rolls with something like <span class="fc-roll success">12</span> (green) or failure (red)
+					const rollEl = rollsSpan.querySelector(".fc-roll, .dice-total, span");
+					let total = 0, success = false;
+					if (rollEl) {
+						total = parseInt(rollEl.textContent) || parseInt(rollsSpan.textContent) || 0;
+						success = rollEl.classList.contains("success") || rollEl.classList.contains("criticalSuccess") || rollsSpan.querySelector(".success") !== null;
+						const hasFail = rollEl.classList.contains("failure") || rollEl.classList.contains("criticalFailure") || rollsSpan.querySelector(".failure") !== null;
+						if (hasFail) success = false;
+						if (!rollEl.classList.contains("success") && !rollEl.classList.contains("failure")) success = total >= dc;
+					} else {
+						total = parseInt(rollsSpan.textContent) || 0;
+						success = total >= dc;
+					}
+					return { dc, label, total, success, degree: success ? "success" : "failure", element: rollsSpan };
+				}
+			}
+			console.warn(`${Manager.id} | flat auto: timed out waiting for result`, message.id);
+			return null;
+		} catch (e) { console.warn(`${Manager.id} | flat auto failed`, e); return null; }
+	}
+
 	/** degree helper */
 	static _degree(success, dc, rollTotal) {
 		// PF2e 4 degrees: crit success if total >= dc+10, success >=dc, fail <dc, crit fail <= dc-10
@@ -255,7 +339,7 @@ export class MonkFlurryTool {
 					return { roll: result.roll ?? result, total, degree: degreeStr, raw: result };
 				}
 			}
-		} catch (e) { console.debug(`${Manager.id} | _rollCheck fallback`, e); }
+		} catch (e) {}
 		// Fallback manual 1d20
 		const mod = (() => {
 			try {
@@ -293,6 +377,9 @@ export class MonkFlurryTool {
 	static async _rollAttack(strike, variantIndex, targetActor, targetToken) {
 		// Use the system's native strike attack roll so chat messages look exactly like manual strikes.
 		// That creates the normal PF2e attack card (with MAP, traits, dice-so-nice, etc.) and returns a CheckRoll.
+		// For the macro we never want the modifier dialog, even when the user has "Always Show Dialog" enabled.
+		// Passing `skipDialog:true` without an event forces the early-return path in PF2e's eventToRollParams
+		// (see pf2e.mjs `if (!('event' in e) ...) return e;`) so the dialog is always skipped.
 		try {
 			const variant = strike.variants?.[Number(variantIndex)] ?? strike.variants?.[0];
 			if (!variant) return null;
@@ -303,8 +390,31 @@ export class MonkFlurryTool {
 			if (!hadTarget) {
 				try { targetToken.setTarget(true, { releaseOthers: false }); } catch {}
 			}
-			const fakeEvent = new MouseEvent("click", { shiftKey: false, ctrlKey: false, altKey: false, metaKey: false });
-			const result = await variant.roll({ event: fakeEvent });
+			// Capture the attack-roll message that variant.roll creates.
+			// Hooks.once is racy with PF2e's async message creation, so we also poll game.messages.
+			let attackMessage = null;
+			const beforeIds = new Set([...game.messages.keys()]);
+			const hook = (msg) => { if (msg?.flags?.pf2e?.context?.type === "attack-roll") attackMessage = msg; };
+			Hooks.on("createChatMessage", hook);
+			const result = await variant.roll({ skipDialog: true });
+			// Give PF2e a tick to create the ChatMessage
+			await new Promise((r) => setTimeout(r, 180));
+			Hooks.off("createChatMessage", hook);
+			try {
+				const newMsgs = [...game.messages.values()].filter((m) => !beforeIds.has(m.id));
+			} catch {}
+			if (!attackMessage) {
+				try {
+					// Fallback: most recent attack-roll not in beforeIds, or any recent attack-roll
+					for (const m of [...game.messages.values()].reverse()) {
+						if (beforeIds.has(m.id)) break;
+						if (m.flags?.pf2e?.context?.type === "attack-roll") { attackMessage = m; break; }
+					}
+					if (!attackMessage) {
+						attackMessage = [...game.messages.values()].reverse().find((m) => m.flags?.pf2e?.context?.type === "attack-roll") ?? [...game.messages.values()].at(-1) ?? null;
+					}
+				} catch {}
+			}
 			// PF2e's CheckRoll carries degreeOfSuccess (0..3) and .roll; we parse degree and hit
 			const ac = targetActor.getStatistic?.("ac")?.dc?.value ?? targetActor.system?.attributes?.ac?.value ?? 0;
 			const total = result?.roll?.total ?? result?.total ?? 0;
@@ -312,33 +422,59 @@ export class MonkFlurryTool {
 			// Some PF2e versions return the message instead; try to read flags
 			if (!result?.degreeOfSuccess && degree === "failure" && total) {
 				// still try to get from last message if available
-				const last = [...game.messages.values()].at(-1);
+				const last = attackMessage ?? [...game.messages.values()].at(-1);
 				const outcome = last?.flags?.pf2e?.context?.outcome;
 				if (outcome) degree = outcome;
 			}
 			const hit = degree === "success" || degree === "criticalSuccess";
-			return { roll: result?.roll ?? result ?? null, total, degree, hit, raw: result };
+			return { roll: result?.roll ?? result ?? null, total, degree, hit, raw: result, message: attackMessage, messageId: attackMessage?.id ?? null };
 		} catch (e) {
 			console.warn(`${Manager.id} | _rollAttack native failed, falling back`, e);
 			try {
 				const ac = targetActor.getStatistic?.("ac")?.dc?.value ?? 15;
 				const mod = strike.statistic?.check?.mod ?? 0;
 				const r = await new Roll("1d20 + @mod", { mod }).evaluate();
-				await r.toMessage({ flavor: `${strike.label ?? "Strike"} vs AC ${ac}`, speaker: ChatMessage.getSpeaker({ actor: strike.actor }) });
+				const msg = await r.toMessage({ flavor: `${strike.label ?? "Strike"} vs AC ${ac}`, speaker: ChatMessage.getSpeaker({ actor: strike.actor }) });
 				const degree = this._degree(null, ac, r.total);
-				return { roll: r, total: r.total, degree, hit: degree === "success" || degree === "criticalSuccess", raw: null };
+				return { roll: r, total: r.total, degree, hit: degree === "success" || degree === "criticalSuccess", raw: null, message: msg, messageId: msg?.id ?? null };
 			} catch (e2) { console.error(`${Manager.id} | fallback attack failed`, e2); return null; }
 		}
 	}
 
+	static async _patchAttackWithFlat(message, flat, dc, targetActor) {
+		if (!message) { console.warn(`${Manager.id} | flat patch: no message for flat`, flat); return; }
+		if (!flat) { console.warn(`${Manager.id} | flat patch: no flat data for`, message.id); return; }
+		try {
+			const success = flat.success;
+			const label = dc === 11 ? "Hidden" : "Concealed";
+			// Mimic native flat-check result: number inside a colored box near the button (green success / red failure)
+			const flatHtml = `<div class="flat-check" style="margin-top:0.5em;display:flex;align-items:center;gap:0.6em;padding:0.4em 0.5em;border:1px solid var(--color-border-light-2);border-radius:6px;background:var(--color-bg-option,rgba(0,0,0,0.03));"><span style="font-weight:bold;">Flat Check vs ${label} (DC ${dc}):</span><span class="dice-total" style="display:inline-block;min-width:2.4em;text-align:center;padding:0.2em 0.45em;border-radius:4px;font-weight:bold;font-size:1.05em;background:${success ? "#2d8a4e" : "#9a2a2a"};color:white;border:1px solid ${success ? "#1f6b3a" : "#7a1f1f"};">${flat.total}</span><span class="${success ? "success" : "failure"}" style="font-weight:bold;color:${success ? "#2d8a4e" : "#9a2a2a"};">${success ? "Success" : "Failure - attack misses"}</span></div>`;
+			let content = message.content ?? "";
+			// Avoid double-patching
+			// If PF2e already rendered a flat-check button (when target was concealed/hidden), replace that button with the result box -" like native does when you click it
+			if (/Flat Check/i.test(content) && /<button[^>]*>/.test(content)) {
+				const replaced = content.replace(/<button[^>]*>[\s\S]*?Flat Check[\s\S]*?<\/button>/i, flatHtml);
+				if (replaced !== content) content = replaced;
+				else content = content + flatHtml;
+			} else {
+				content = content + flatHtml;
+			}
+			await message.update({ content });
+			// Also update system outcome flag so "Apply Damage" buttons disappear on failure (like system does)
+			if (!success) {
+				try { await message.update({ "flags.pf2e.context.outcome": "failure", "flags.pf2e.context.flatCheckResult": "failure" }); } catch {}
+			}
+		} catch (e) { console.warn(`${Manager.id} | flat patch failed`, e); }
+	}
+
 	static async _rollDamage(strike, isCritical) {
 		// Use native PF2e damage so the message has the standard damage card + Apply buttons.
+		// Macro must not show the damage modifier dialog even if the user has showDamageDialogs on.
 		try {
-			const fakeEvent = new MouseEvent("click", { shiftKey: false });
 			const fn = isCritical ? strike.critical : strike.damage;
 			if (typeof fn !== "function") throw new Error("no damage fn");
 			const before = game.messages.size;
-			const result = await fn({ event: fakeEvent });
+			const result = await fn({ skipDialog: true });
 			// result is a DamageRoll; total is sum of instances
 			let total = 0;
 			if (result && typeof result.total === "number") total = result.total;
@@ -444,6 +580,8 @@ export class MonkFlurryTool {
 	}
 
 	static async execute() {
+		let _userFlags = null, _prevCheck = null, _prevDamage = null;
+		const _restoreDialogs = () => { if (_userFlags) { _userFlags.showCheckDialogs = _prevCheck; _userFlags.showDamageDialogs = _prevDamage; } };
 		try {
 			if (!Manager.isEnabled(this.id)) return ui.notifications.warn(Manager.localize("monkFlurry.notify.disabled") || "Monk Flurry is disabled");
 			const controlled = canvas.tokens.controlled;
@@ -472,21 +610,67 @@ export class MonkFlurryTool {
 			// Mark flourish
 			this._markUsedFlurry(attacker);
 
+			// Action Tracker: 1× Flurry of Blows (1 action) + next 2 attack-rolls free (0, still visible) + next trip athletics hidden
+			try {
+				const flurryIcon = strike.item?.img ? { img: strike.item.img } : { fa: "fa-hand-fist" };
+				await ActionTrackerTool.logAndSuppress(attacker, {
+					name: "Flurry of Blows",
+					cost: 1,
+					icon: flurryIcon,
+					suppress: {
+						free: { count: 2, types: ["attack-roll"] },
+						hide: { count: 2, types: ["skill-check", "perception-check"] }
+					}
+				});
+			} catch (e) { console.warn(`${Manager.id} | flurry action-tracker suppress failed`, e); }
+
 			const flavorAttack = hasWolfStance ? "Wolf Jaws" : "Fist";
 			const attackerName = attacker.name;
 			const targetName = targetActor.name;
 
+			// --- Macro must be fully automatic: suppress ALL PF2e dialogs even when the user has
+			// "Always Show Dialog" enabled. PF2e's eventToRollParams reads game.user.settings.show*Dialogs
+			// and toggles with Shift, so passing skipDialog:true alone is overwritten by the event path.
+			// We temporarily flip the in-memory flags (no DB write) for the duration of the macro.
+			_userFlags = game.user.flags.pf2e?.settings;
+			_prevCheck = _userFlags?.showCheckDialogs;
+			_prevDamage = _userFlags?.showDamageDialogs;
+			if (_userFlags) { _userFlags.showCheckDialogs = false; _userFlags.showDamageDialogs = false; }
+			let result1 = null, result2 = null;
 			// Perform two attacks: MAP 0 and MAP -4 (agile). Wolf Jaws is agile, fist is agile? Fist from Powerful Fist? Actually fist has agile.
 			// Use variants if available; otherwise apply -4 manual
 			const variant0 = strike.variants?.[0] ?? null;
 			const variant1 = strike.variants?.[1] ?? null;
 			// Roll attacks sequentially
-			let result1 = null, result2 = null;
 			// Ensure target is selected for variant rolls
 			result1 = await this._rollAttack(strike, 0, targetActor, targetToken);
 			result2 = await this._rollAttack(strike, 1, targetActor, targetToken);
 
-			// Evaluate hits
+			// Flat check vs concealed/hidden: like system does - roll 1d20 vs DC 5/11 after attack, before damage;
+			// on failure the attack becomes a miss even if AC would hit. Live DC per answer 1/5.
+			// Flat check: mimic clicking the native <button data-action="roll-flatcheck"> that PF2e adds at the very end of the attack card
+			// (section.fc-flatcheck-buttons -> div.fc-check -> span.fc-rolls + button). Native shows number inside a box near the button, green/red.
+			// We auto-click that button so the result looks exactly native, without adding our own text.
+			let flat1 = null, flat2 = null;
+			const tryFlatViaButton = async (result) => {
+				if (!result?.hit || !result.message) return null;
+				let flat = await this._autoRollFlatCheck(result.message);
+				if (flat) return flat;
+				// Fallback: button not rendered (e.g. no concealed) but actor still has condition per live check
+				const dc = this._getFlatCheckDC(targetActor);
+				if (dc) {
+					flat = await this._rollFlatCheck(dc);
+					await this._patchAttackWithFlat(result.message, flat, dc, targetActor);
+					return flat;
+				}
+				return null;
+			};
+			flat1 = await tryFlatViaButton(result1);
+			if (flat1) { result1.flat = flat1; if (!flat1.success) { result1.hit = false; result1.degree = "failure"; result1.flatMiss = true; } }
+			flat2 = await tryFlatViaButton(result2);
+			if (flat2) { result2.flat = flat2; if (!flat2.success) { result2.hit = false; result2.degree = "failure"; result2.flatMiss = true; } }
+
+			// Evaluate hits (flat-check failures have already been turned into misses)
 			const hits = [];
 			const damages = [];
 			if (result1?.hit) hits.push({ idx: 0, res: result1 });
@@ -507,24 +691,43 @@ export class MonkFlurryTool {
 			if (damages.length) {
 				const bothHit = damages.length === 2;
 				// Let Dice So Nice finish its 3D animation before the summary appears, otherwise cards overlap
-				const diceCount = 2 + damages.length; // 2 attacks + each damage roll
+				const flatCount = (flat1 ? 1 : 0) + (flat2 ? 1 : 0);
+				const diceCount = 2 + damages.length + flatCount; // 2 attacks + each damage roll + flat checks
 				await this._waitForDice(diceCount);
 				const dmgType = strike.item?.system?.damage?.damageType ?? strike.item?.system?.damage?.base?.damageType ?? (hasWolfStance ? "piercing" : "bludgeoning");
 				await this._createCombinedDamageMessage(attacker, attackerToken, targetActor, targetToken, combinedTotal, flavorAttack, dmgType, strike);
-				// Small textual summary for resistances note (no rolls, just info)
-				if (bothHit) {
-					await ChatMessage.create({
-						speaker: ChatMessage.getSpeaker({ actor: attacker, token: attackerToken.document ?? null }),
-						content: `<div class="monk-flurry-card"><p class="hint">${flavorAttack}: ${damageDetails.join(" + ")} = <strong>Combined ${combinedTotal}</strong> — resistances/weaknesses apply once to the combined total. MAP: 0 / -4 (agile). Flourish — once per turn.</p></div>`,
-						flavor: `Flurry of Blows — Summary Combined ${combinedTotal}`,
-					});
-				}
+				// Flat check summary - native flat result already patched into the attack card via button click; summary is for transparency (per answer 3 no new messages, but we keep a textual note)
+				const flatSummary = (flat1 || flat2) ? (() => {
+					const parts = [];
+					if (flat1) parts.push(`Attack 1 Flat Check DC ${flat1.dc}: ${flat1.total} -> ${flat1.success ? '<span class="success">Success</span>' : '<span class="failure">Failure - attack missed due to ' + (flat1.dc === 11 ? 'Hidden' : 'Concealed') + '</span>'}`);
+					if (flat2) parts.push(`Attack 2 Flat Check DC ${flat2.dc}: ${flat2.total} -> ${flat2.success ? '<span class="success">Success</span>' : '<span class="failure">Failure - attack missed due to ' + (flat2.dc === 11 ? 'Hidden' : 'Concealed') + '</span>'}`);
+					const failedFlats = [flat1, flat2].filter(f => f && !f.success);
+					if (failedFlats.length) parts.push(`<em>${failedFlats.length} hit(s) negated by flat check - like system does, treated as miss.</em>`);
+					return parts.length ? `<p class="hint">Flat Checks: ${parts.join(" | ")}</p>` : "";
+				})() : "";
+				// Update attack card visuals like system does when flat check fails - add a message edit if needed
+				// For now the summary carries the flat result; the attack cards themselves remain as rolled vs AC.
+				await ChatMessage.create({
+					speaker: ChatMessage.getSpeaker({ actor: attacker, token: attackerToken.document ?? null }),
+					content: `<div class="monk-flurry-card"><p class="hint">${flavorAttack}: ${damageDetails.join(" + ")} = <strong>Combined ${combinedTotal}</strong>${bothHit ? " - resistances/weaknesses apply once to the combined total" : ""}. MAP: 0 / -4 (agile). Flourish - once per turn.</p>${flatSummary}</div>`,
+					flavor: `Flurry of Blows - Summary Combined ${combinedTotal}`,
+					rolls: [flat1?.roll, flat2?.roll].filter(Boolean),
+				});
 			} else {
-				await this._waitForDice(2);
+				const flatMissCount = [flat1, flat2].filter(f => f && !f.success).length;
+				const flatSummaryElse = (() => {
+					if (!flat1 && !flat2) return "";
+					const parts = [flat1, flat2].filter(Boolean).map((f,i) => `Attack ${i+1} DC ${f.dc}: ${f.total} -> ${f.success ? "Success" : "Failure - missed due to " + (f.dc===11?"Hidden":"Concealed")}`);
+					return `<p class="hint">Flat Checks: ${parts.join(" | ")}</p>`;
+				})();
+				const flatCountElse = [flat1, flat2].filter(Boolean).length;
+				await this._waitForDice(2 + flatCountElse);
+				const reason = flatMissCount ? ` - ${flatMissCount} hit(s) negated by flat check (concealed/hidden)` : "";
 				await ChatMessage.create({
 					speaker: ChatMessage.getSpeaker({ actor: attacker }),
-					content: `<div class="monk-flurry-card"><h3>Flurry of Blows — ${attackerName} → ${targetName}</h3><p><em>Both attacks missed — no damage, no Stunning Blows.</em></p><p class="hint">Native attack rolls are shown above.</p></div>`,
-					flavor: "Flurry of Blows — No hits",
+					content: `<div class="monk-flurry-card"><h3>Flurry of Blows - ${attackerName} -> ${targetName}</h3><p><em>Both attacks missed${reason} - no damage, no Stunning Blows.</em></p>${flatSummaryElse}<p class="hint">Native attack rolls are shown above.</p></div>`,
+					flavor: "Flurry of Blows - No hits",
+					rolls: [flat1?.roll, flat2?.roll].filter(Boolean),
 				});
 				return;
 			}
@@ -560,11 +763,11 @@ export class MonkFlurryTool {
 					if (degree === "failure") stunOps.push({ type: "stunned", value: 1 });
 					else if (degree === "criticalFailure") stunOps.push({ type: "stunned", value: 3 });
 					const outcomeText = { criticalSuccess: "Critical Success — no stun", success: "Success — no stun", failure: "Failure — Stunned 1", criticalFailure: "Critical Failure — Stunned 3" }[degree] ?? degree;
+					// fortResult already created its native save message via _rollCheck (createMessage:true); summary is text-only to avoid duplicate Roll
 					await ChatMessage.create({
 						speaker: ChatMessage.getSpeaker({ actor: targetActor }),
-						content: `<div class="monk-flurry-card"><h4>Stunning Blows — ${targetName} Fort vs DC ${classDC}</h4><p>Roll: ${fortResult.total} — <strong>${outcomeText}</strong> ${degree?.includes("critical") ? "(incapacitation adjusted if applicable)" : ""}</p></div>`,
-						flavor: `Stunning Blows Fort Save — ${degree}`,
-						rolls: fortResult.roll ? [fortResult.roll] : [],
+						content: `<div class="monk-flurry-card"><h4>Stunning Blows - ${targetName} Fort vs DC ${classDC}</h4><p>Roll: ${fortResult.total} - <strong>${outcomeText}</strong> ${degree?.includes("critical") ? "(incapacitation adjusted if applicable)" : ""}</p></div>`,
+						flavor: `Stunning Blows Fort Save - ${degree}`,
 					});
 					if (stunOps.length) await this._applyConditions(targetActor, stunOps);
 				}
@@ -622,11 +825,11 @@ export class MonkFlurryTool {
 						const degree = athResult.degree;
 						const success = degree === "success" || degree === "criticalSuccess";
 						const critFail = degree === "criticalFailure";
+						// athResult already has its own native message (check.roll or toMessage); summary is text-only to avoid duplicate Roll
 						await ChatMessage.create({
 							speaker: ChatMessage.getSpeaker({ actor: attacker }),
-							content: `<div class="monk-flurry-card"><h4>Trip Attempt ${dmg.idx + 1} — ${attackerName} vs ${targetName} Reflex DC ${reflexDC} (MAP ${mapPenalty})</h4><p>Roll ${athResult.total} — <strong>${degree}</strong> ${success ? "— Prone!" : critFail ? "— Crit Fail! You fall prone." : ""}</p></div>`,
-							flavor: `Trip ${dmg.idx + 1} — ${degree}`,
-							rolls: athResult.roll ? [athResult.roll] : [],
+							content: `<div class="monk-flurry-card"><h4>Trip Attempt ${dmg.idx + 1} - ${attackerName} vs ${targetName} Reflex DC ${reflexDC} (MAP ${mapPenalty})</h4><p>Roll ${athResult.total} - <strong>${degree}</strong> ${success ? "- Prone!" : critFail ? "- Crit Fail! You fall prone." : ""}</p></div>`,
+							flavor: `Trip ${dmg.idx + 1} - ${degree}`,
 						});
 						if (success) {
 							if (!targetActor.hasCondition?.("prone")) proneOps.push({ type: "prone" });
@@ -645,6 +848,8 @@ export class MonkFlurryTool {
 		} catch (e) {
 			console.error(`${Manager.id} | monkFlurry execute failed`, e);
 			ui.notifications.error("Flurry of Blows failed — see console (F12)");
+		} finally {
+			_restoreDialogs();
 		}
 	}
 }

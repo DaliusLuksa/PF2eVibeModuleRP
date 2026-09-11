@@ -58,10 +58,12 @@ export class EffectAutomatorTool {
 		this._loadRules();
 		// GMs drive the engine: turn start/end are GM-side, and damage-taken
 		// messages are processed by the GM so it can roll/apply for any actor.
+		// On Applied runs GM-side via createItem (new item on actor).
 		if ( game.user.isGM ) {
 			Hooks.on("pf2e.startTurn", this._onStartTurn.bind(this));
 			Hooks.on("pf2e.endTurn", this._onEndTurn.bind(this));
 			Hooks.on("createChatMessage", this._onChatMessage.bind(this));
+			Hooks.on("createItem", this._onCreateItem.bind(this));
 		}
 		console.debug(`${Manager.id} | hooks installed`);
 	}
@@ -95,7 +97,21 @@ export class EffectAutomatorTool {
 			parsed = null;
 		}
 		this._rules = Array.isArray(parsed?.rules) ? parsed.rules : [];
+		for ( const rule of this._rules ) this._normalizeRule(rule);
 		return this._rules;
+	}
+
+	static _normalizeRule(rule) {
+		if ( !rule || typeof rule !== "object" ) return;
+		rule.roll ??= { type: "reflex", dc: 20 };
+		rule.roll.type ??= "reflex";
+		rule.roll.dc ??= 20;
+		rule.roll.useCasterDC ??= false;
+		// On Applied always removes the marker
+		if ( rule.trigger === "onApplied" ) rule.removeOnTrigger = true;
+		rule.removeOnTrigger ??= false;
+		rule.outcomes ??= { criticalSuccess: [], success: [], failure: [], criticalFailure: [] };
+		for ( const key of Object.keys(OUTCOME_LABELS) ) rule.outcomes[key] ??= [];
 	}
 
 	/**
@@ -129,6 +145,7 @@ export class EffectAutomatorTool {
 	}
 
 	static async _upsertRule(rule) {
+		this._normalizeRule(rule);
 		const index = this._rules.findIndex((r) => r.id === rule.id);
 		if ( index >= 0 ) this._rules[index] = rule;
 		else this._rules.push(rule);
@@ -159,6 +176,22 @@ export class EffectAutomatorTool {
 		if ( type !== "damage-taken" ) return;
 		const actor = message.speakerActor ?? message.token?.actor ?? null;
 		await this._onTurnTrigger(actor, "damage");
+	}
+
+	/** On Applied: fired when any effect item lands on an actor (createItem). GM-only. */
+	static async _onCreateItem(item, options, userId) {
+		if ( item?.type !== "effect" ) return;
+		if ( !item.parent?.isOfType?.("character", "npc", "creature", "hazard", "familiar") ) return;
+		// Only react to real actor-embedded effect copies
+		const actor = item.parent;
+		if ( !this._rules.length ) return;
+		for ( const rule of this._rules ) {
+			if ( rule.trigger !== "onApplied" ) continue;
+			if ( !this._matchesSource(item, rule.effectUuid) ) continue;
+			console.debug(`${Manager.id} | effect-automator: "onApplied" fired for ${actor.name} (${item.name})`);
+			await this._rollFor(actor, rule, item);
+			// one rule per source effect; avoid double firing if duplicate UUIDs
+		}
 	}
 
 	/** Run every rule whose trigger matches and whose source effect is on `actor`. */
@@ -207,20 +240,32 @@ export class EffectAutomatorTool {
 	/*  Rolling                                     */
 	/* -------------------------------------------- */
 
-	static async _rollFor(actor, rule) {
+	static async _rollFor(actor, rule, triggerItem = null) {
 		const saveType = rule.roll?.type ?? "reflex";
 		const statistic = actor.saves?.[saveType] ?? actor.getStatistic?.(saveType);
 		if ( !statistic ) {
 			console.warn(`${Manager.id} | actor ${actor.name} has no ${saveType} save`);
 			return;
 		}
-		const dc = Math.max(0, Number(rule.roll?.dc) || 0);
+		let dc = null;
+		if ( rule.roll?.useCasterDC ) {
+			dc = await this._resolveCasterDC(actor, rule, triggerItem);
+			if ( dc == null ) {
+				const msg = Manager.localize("effectAutomator.noCasterDC");
+				console.warn(`${Manager.id} | ${msg} (${actor.name})`);
+				ui.notifications.warn(msg);
+				return;
+			}
+		} else {
+			dc = Math.max(0, Number(rule.roll?.dc) || 0);
+		}
 		try {
 			await statistic.roll({
 				dc: { value: dc },
 				skipDialog: true,
-				callback: (roll, outcome, message) => {
-					this._applyOutcome(actor, rule, outcome).catch((error) =>
+				callback: async (roll, outcome, message) => {
+					const adjusted = await this._adjustForIncapacitation(actor, rule, triggerItem, outcome);
+					this._applyOutcome(actor, rule, adjusted, triggerItem).catch((error) =>
 						console.warn(`${Manager.id} | could not apply outcome for ${actor.name}`, error)
 					);
 				}
@@ -230,18 +275,153 @@ export class EffectAutomatorTool {
 		}
 	}
 
+	/** Resolve caster's DC correctly: specific spellcasting entry that can cast the spell, else highest spell DC, else classOrSpell. */
+	static async _resolveCasterDC(targetActor, rule, triggerItem) {
+		try {
+			// Find the embedded effect copy (triggerItem for onApplied, else any matching marker)
+			let effectItem = triggerItem;
+			if ( !effectItem ) effectItem = targetActor.items.find((item) => this._matchesSource(item, rule.effectUuid)) ?? null;
+			const originActorUuid = effectItem?.system?.context?.origin?.actor ?? null;
+			if ( !originActorUuid ) return null;
+			const caster = await foundry.utils.fromUuid(originActorUuid).catch(() => null);
+			if ( !caster ) return null;
+
+			// Try to resolve the spell document (effect's origin spell)
+			let spell = null;
+			const originItemUuid = effectItem?.flags?.pf2e?.origin ?? effectItem?.system?.context?.origin?.item ?? null;
+			if ( originItemUuid ) {
+				try { const maybe = await foundry.utils.fromUuid(originItemUuid).catch(() => null); if ( maybe?.isOfType?.("spell") ) spell = maybe; } catch {}
+			}
+			if ( !spell ) {
+				try { const maybe = await foundry.utils.fromUuid(rule.effectUuid).catch(() => null); if ( maybe?.isOfType?.("spell") ) spell = maybe; } catch {}
+				// effectUuid points at an effect, not a spell — try lookup by effect name -> spell name
+				if ( !spell && rule.effectUuid ) {
+					try {
+						const effDoc = await foundry.utils.fromUuid(rule.effectUuid).catch(() => null);
+						if ( effDoc?.name?.startsWith("Spell Effect: ") ) {
+							const spellName = effDoc.name.replace(/^Spell Effect:\s*/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+							// fall through to no spell — highest spell DC will be used
+						}
+					} catch {}
+				}
+			}
+
+			// 1) Direct entry by location
+			if ( spell?.system?.location?.value ) {
+				const byLocation = caster.spellcasting?.get?.(spell.system.location.value) ?? null;
+				if ( byLocation?.statistic?.dc?.value ) return byLocation.statistic.dc.value;
+			}
+			// 2) Best entry that canCast this spell (handles heightening / tradition filtering) pf2e.mjs:32585
+			if ( spell && caster.spellcasting ) {
+				const best = [...caster.spellcasting].filter((e) => !!e.statistic && typeof e.canCast === "function" && e.canCast(spell, { origin: effectItem })).reduce((best, entry) => !best || entry.statistic.dc.value > best.statistic.dc.value ? entry : best, null);
+				if ( best?.statistic?.dc?.value ) return best.statistic.dc.value;
+				// Fallback: filter by tradition
+				const trad = spell.system?.traits?.traditions?.[0] ?? spell.traditions?.first?.() ?? null;
+				if ( trad ) {
+					const byTrad = caster.getStatistic?.(trad);
+					if ( byTrad?.dc?.value ) return byTrad.dc.value;
+				}
+			}
+			// 3) Highest spell DC pf2e.mjs:32560
+			const spellDC = caster.getStatistic?.("spell-dc");
+			if ( spellDC?.dc?.value ) return spellDC.dc.value;
+			if ( caster.system?.attributes?.spellDC?.value ) return caster.system.attributes.spellDC.value;
+			// 4) classOrSpell / classDC pf2e.mjs:33325:52691
+			const classSpell = caster.getStatistic?.("class-spell");
+			if ( classSpell?.dc?.value ) return classSpell.dc.value;
+			if ( caster.system?.attributes?.classOrSpellDC?.value ) return caster.system.attributes.classOrSpellDC.value;
+			if ( caster.system?.attributes?.classDC?.value ) return caster.system.attributes.classDC.value;
+			return null;
+		} catch (error) {
+			console.warn(`${Manager.id} | _resolveCasterDC failed`, error);
+			return null;
+		}
+	}
+
+	/** Incapacitation: if source spell has the trait, bump outcome one degree better when target level is high. */
+	static async _adjustForIncapacitation(targetActor, rule, triggerItem, outcome) {
+		try {
+			let spell = null;
+			let effectItem = triggerItem ?? targetActor.items.find((item) => this._matchesSource(item, rule.effectUuid)) ?? null;
+			const originItemUuid = effectItem?.flags?.pf2e?.origin ?? effectItem?.system?.context?.origin?.item ?? null;
+			if ( originItemUuid ) {
+				try { const maybe = await foundry.utils.fromUuid(originItemUuid).catch(() => null); if ( maybe?.isOfType?.("spell") ) spell = maybe; } catch {}
+				if ( !spell ) { try { const maybe = foundry.utils.fromUuidSync(originItemUuid); if ( maybe?.isOfType?.("spell") ) spell = maybe; } catch {} }
+			}
+			if ( !spell && rule.effectUuid ) {
+				try {
+					const effDoc = await foundry.utils.fromUuid(rule.effectUuid).catch(() => null);
+					if ( effDoc?.name?.startsWith("Spell Effect: ") ) {
+						const spellName = effDoc.name.replace(/^Spell Effect:\s*/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+						spell = game.items.find((i) => i.isOfType?.("spell") && i.name === spellName) ?? null;
+						if ( !spell ) {
+							const pack = game.packs.get("pf2e.spells-srd");
+							if ( pack ) {
+								try {
+									const index = await pack.getIndex();
+									const entry = index.find((e) => e.name === spellName);
+									if ( entry ) spell = await pack.getDocument(entry._id).catch(() => null);
+								} catch {}
+							}
+						}
+					}
+				} catch {}
+			}
+			if ( !spell ) return outcome;
+			const hasIncap = !!spell.system?.traits?.value?.includes?.("incapacitation");
+			if ( !hasIncap ) return outcome;
+			let spellRank = Number(spell.system?.level?.value ?? 0) || 0;
+			try {
+				const origin = effectItem?.system?.context?.origin;
+				if ( origin?.castRank ) spellRank = Number(origin.castRank) || spellRank;
+			} catch {}
+			const targetLevel = Number(targetActor.level ?? targetActor.system?.details?.level?.value ?? 0) || 0;
+			if ( !(targetLevel > spellRank * 2) ) return outcome;
+			const order = ["criticalFailure", "failure", "success", "criticalSuccess"];
+			const idx = order.indexOf(outcome);
+			if ( idx === -1 || idx >= order.length - 1 ) return outcome;
+			const bumped = order[idx + 1];
+			console.debug(`${Manager.id} | incapacitation bumped ${outcome} -> ${bumped} for ${targetActor.name} (level ${targetLevel} vs rank ${spellRank})`);
+			return bumped;
+		} catch (error) {
+			console.warn(`${Manager.id} | incapacitation adjust failed`, error);
+			return outcome;
+		}
+	}
+
 	/** Apply the configured effect items for a degree-of-success outcome. */
-	static async _applyOutcome(actor, rule, outcome) {
+	static async _applyOutcome(actor, rule, outcome, triggerItem = null) {
 		const effects = rule.outcomes?.[outcome] ?? [];
-		if ( !effects.length ) return;
+		// Resolve origin from the triggering marker (for sustain reminder + caster tracking)
+		let originActorUuid = null;
+		let originItemUuid = null;
+		try {
+			const marker = triggerItem ?? actor.items.find((item) => this._matchesSource(item, rule.effectUuid)) ?? null;
+			if ( marker ) {
+				originActorUuid = marker.system?.context?.origin?.actor ?? null;
+				originItemUuid = marker.system?.context?.origin?.item ?? marker.flags?.pf2e?.origin ?? null;
+				// Fallback: region's pf2e origin item uuid already stored as originItemUuid
+				if ( !originActorUuid && marker.getFlag?.(Manager.id, "areaOrigin") ) {
+					// Try to infer from marker's own areaSource? no
+				}
+			}
+		} catch {}
+		if ( !effects.length ) {
+			// Still remove marker even if no outcome effects (onApplied with just removal)
+			if ( rule.removeOnTrigger ) {
+				const marker = triggerItem ?? actor.items.find((item) => this._matchesSource(item, rule.effectUuid));
+				if ( marker ) await this._removeFromActor(actor, marker);
+			}
+			return;
+		}
 		for ( const uuid of effects ) {
 			if ( this._hasEffectCopy(actor, uuid) ) continue;
 			const item = await foundry.utils.fromUuid(uuid).catch(() => null);
 			if ( !item ) continue;
-			await this._applyToActor(actor, item, rule.id);
+			await this._applyToActor(actor, item, rule.id, { originActorUuid, originItemUuid });
 		}
 		if ( rule.removeOnTrigger ) {
-			const marker = actor.items.find((item) => this._matchesSource(item, rule.effectUuid));
+			const marker = triggerItem ?? actor.items.find((item) => this._matchesSource(item, rule.effectUuid));
 			if ( marker ) await this._removeFromActor(actor, marker);
 		}
 	}
@@ -250,13 +430,23 @@ export class EffectAutomatorTool {
 	/*  Effect apply / remove (GM routed)           */
 	/* -------------------------------------------- */
 
-	static async _applyToActor(actor, effectItem, ruleId) {
+	static async _applyToActor(actor, effectItem, ruleId, origin = {}) {
 		const source = foundry.utils.mergeObject(effectItem.toObject(), {
 			_id: null,
 			flags: {
 				[Manager.id]: { ...(effectItem.flags?.[Manager.id] ?? {}), automatorRule: ruleId }
 			}
 		}, { overwrite: false });
+		// Propagate caster origin so Sustain Reminder can map sustained effects back to caster
+		const originActorUuid = origin?.originActorUuid ?? null;
+		const originItemUuid = origin?.originItemUuid ?? null;
+		if ( originActorUuid || originItemUuid ) {
+			source.system ??= {};
+			source.system.context ??= {};
+			source.system.context.origin ??= {};
+			if ( originActorUuid ) source.system.context.origin.actor = originActorUuid;
+			if ( originItemUuid ) source.system.context.origin.item = originItemUuid;
+		}
 		if ( actor.testUserPermission(game.user, "OWNER") ) {
 			await actor.createEmbeddedDocuments("Item", [source]);
 		} else {
@@ -400,8 +590,11 @@ export class EffectAutomatorTool {
 			effectName: this._displayName(rule.effectUuid),
 			effectUuid: rule.effectUuid,
 			trigger: rule.trigger,
-			rollSummary: `${rule.roll?.type ?? "reflex"} (DC ${Number(rule.roll?.dc) || 0})`,
+			rollSummary: rule.roll?.useCasterDC
+				? `${rule.roll?.type ?? "reflex"} (${Manager.localize("effectAutomator.casterDCShort")})`
+				: `${rule.roll?.type ?? "reflex"} (DC ${Number(rule.roll?.dc) || 0})`,
 			removeOnTrigger: !!rule.removeOnTrigger,
+			useCasterDC: !!rule.roll?.useCasterDC,
 			outcomes: this._outcomeSummary(rule)
 		}));
 		return {
@@ -464,14 +657,17 @@ class EffectAutomatorWindow extends rememberWindowPosition(
 	_prepareContext(options) {
 		const base = EffectAutomatorTool._context();
 		const draft = this._prepareDraft(this._draft);
+		const isOnApplied = draft?.trigger === "onApplied";
 		return {
 			...base,
 			draft,
 			editing: !!this._draft?.id,
+			isOnApplied,
 			triggers: [
 				{ value: "turnStart", label: Manager.localize("effectAutomator.triggerTurnStart") },
 				{ value: "turnEnd", label: Manager.localize("effectAutomator.triggerTurnEnd") },
-				{ value: "damage", label: Manager.localize("effectAutomator.triggerDamage") }
+				{ value: "damage", label: Manager.localize("effectAutomator.triggerDamage") },
+				{ value: "onApplied", label: Manager.localize("effectAutomator.triggerOnApplied") }
 			],
 			outcomeRows: [
 				{ outcomes: this._outcomeRow(["criticalSuccess", "success"], draft) },
@@ -516,7 +712,7 @@ class EffectAutomatorWindow extends rememberWindowPosition(
 			id: foundry.utils.randomID(),
 			effectUuid: "",
 			trigger: "turnStart",
-			roll: { type: "reflex", dc: 20 },
+			roll: { type: "reflex", dc: 20, useCasterDC: false },
 			removeOnTrigger: false,
 			outcomes: { criticalSuccess: [], success: [], failure: [], criticalFailure: [] }
 		};
@@ -526,7 +722,7 @@ class EffectAutomatorWindow extends rememberWindowPosition(
 		const rule = EffectAutomatorTool._rule(id);
 		if ( !rule ) return;
 		this._draft = foundry.utils.deepClone(rule);
-		this._draft.outcomes ??= { criticalSuccess: [], success: [], failure: [], criticalFailure: [] };
+		EffectAutomatorTool._normalizeRule(this._draft);
 		this.render({ force: true });
 	}
 
@@ -539,19 +735,31 @@ class EffectAutomatorWindow extends rememberWindowPosition(
 
 		form.querySelector("select[name='trigger']")?.addEventListener("change", (event) => {
 			this._draft.trigger = event.currentTarget.value;
+			if ( this._draft.trigger === "onApplied" ) this._draft.removeOnTrigger = true;
+			this._draft.roll ??= { type: "reflex", dc: 20, useCasterDC: false };
 			this.render();
 		});
 		form.querySelector("select[name='rollType']")?.addEventListener("change", (event) => {
-			this._draft.roll ??= { type: "reflex", dc: 20 };
+			this._draft.roll ??= { type: "reflex", dc: 20, useCasterDC: false };
 			this._draft.roll.type = event.currentTarget.value;
 			this.render();
 		});
 		form.querySelector("input[name='dc']")?.addEventListener("change", (event) => {
-			this._draft.roll ??= { type: "reflex", dc: 20 };
+			this._draft.roll ??= { type: "reflex", dc: 20, useCasterDC: false };
 			this._draft.roll.dc = event.currentTarget.value;
 			this.render();
 		});
+		form.querySelector("input[name='useCasterDC']")?.addEventListener("change", (event) => {
+			this._draft.roll ??= { type: "reflex", dc: 20, useCasterDC: false };
+			this._draft.roll.useCasterDC = !!event.currentTarget.checked;
+			this.render();
+		});
 		form.querySelector("input[name='removeOnTrigger']")?.addEventListener("change", (event) => {
+			if ( this._draft.trigger === "onApplied" ) {
+				this._draft.removeOnTrigger = true;
+				this.render();
+				return;
+			}
 			this._draft.removeOnTrigger = !!event.currentTarget.checked;
 			this.render();
 		});
@@ -570,6 +778,7 @@ class EffectAutomatorWindow extends rememberWindowPosition(
 		}
 		const rule = foundry.utils.deepClone(this._draft);
 		rule.effectUuid = this._draft.effectUuid;
+		if ( rule.trigger === "onApplied" ) rule.removeOnTrigger = true;
 		await EffectAutomatorTool._upsertRule(rule);
 		this._draft = null;
 		this.render({ force: true });

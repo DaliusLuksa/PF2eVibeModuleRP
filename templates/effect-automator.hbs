@@ -54,11 +54,12 @@
             </div>
             <div class="ea-field">
                 <label for="ea-dc">{{@root.i18n 'dc'}}</label>
-                <input type="number" id="ea-dc" name="dc" min="1" step="1" value="{{draft.roll.dc}}">
+                <input type="number" id="ea-dc" name="dc" min="1" step="1" value="{{draft.roll.dc}}" {{#if draft.roll.useCasterDC}}disabled{{/if}}>
             </div>
             <div class="ea-field">
                 <label class="ea-rad">&nbsp;</label>
-                <label class="ea-rad"><input type="checkbox" name="removeOnTrigger" {{#if draft.removeOnTrigger}}checked{{/if}}> {{@root.i18n 'removeOnTrigger'}}</label>
+                <label class="ea-rad"><input type="checkbox" name="useCasterDC" {{#if draft.roll.useCasterDC}}checked{{/if}}> {{@root.i18n 'casterDC'}}</label>
+                <label class="ea-rad"><input type="checkbox" name="removeOnTrigger" {{#if draft.removeOnTrigger}}checked{{/if}} {{#if @root.isOnApplied}}disabled{{/if}}> {{@root.i18n 'removeOnTrigger'}}</label>
             </div>
         </div>
 

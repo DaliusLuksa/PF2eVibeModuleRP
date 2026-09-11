@@ -3,7 +3,13 @@ import { rememberWindowPosition } from "../core/window-positions.js";
 
 const SOCKET_EVENT = `module.${Manager.id}`;
 const SOCKET_ACTION_STATE = "actionTrackerState";
+const SOCKET_ACTION_SUPPRESS = "actionTrackerSuppress";
+const SOCKET_ACTION_SUPPRESS_RESULT = "actionTrackerSuppressResult";
+const SOCKET_ACTION_LOG_EXTERNAL = "actionTrackerLogExternal";
+const SOCKET_ACTION_LOG_EXTERNAL_RESULT = "actionTrackerLogExternalResult";
 const MODULE_ROOT = "modules/pf2e-vibemodulerp";
+const SUPPRESSION_TIMEOUT_MS = 15000;
+const SUPPRESS_ACK_TIMEOUT_MS = 5000;
 
 /**
  * Combat Action Tracker.
@@ -76,6 +82,11 @@ export class ActionTrackerTool {
 	static _countedSpellUuids = new Set();
 	static _window = null;
 
+	/** Suppression: actorUuid -> { free, hide, freeTypes:Set|null, hideTypes:Set|null, timer } */
+	static _suppressions = new Map();
+	static _pendingSuppress = new Map();
+	static _pendingLogExternal = new Map();
+
 	/** Chat message context types that never cost actions. `self-effect` is NOT
 	 * here: it is handled explicitly in `_onCreateChatMessage` (Apply Effect). */
 	static _skipTypes = new Set([
@@ -97,9 +108,25 @@ export class ActionTrackerTool {
 			restricted: false,
 			precedence: CONST.KEYBINDING_PRECEDENCE.NORMAL
 		});
+		try {
+			const api = (game.modules.get(Manager.id).api ??= {});
+			api.actionTracker = {
+				suppressNext: (...args) => this.suppressNext(...args),
+				logExternal: (...args) => this.logExternal(...args),
+				logAndSuppress: (...args) => this.logAndSuppress(...args)
+			};
+		} catch {}
 	}
 
 	static ready() {
+		try {
+			const api = (game.modules.get(Manager.id).api ??= {});
+			api.actionTracker ??= {
+				suppressNext: (...args) => this.suppressNext(...args),
+				logExternal: (...args) => this.logExternal(...args),
+				logAndSuppress: (...args) => this.logAndSuppress(...args)
+			};
+		} catch {}
 		game.socket.on(SOCKET_EVENT, this._onSocketMessage.bind(this));
 		Hooks.on("combatTurnChange", this._onCombatTurnChange.bind(this));
 		Hooks.on("updateCombat", this._onCombatUpdate.bind(this));
@@ -162,6 +189,9 @@ export class ActionTrackerTool {
 	/** Start a fresh turn for `combatant` on all clients (GM broadcasts after). */
 	static _resetTurn(combatant, round, combatId = null) {
 		this._countedSpellUuids.clear();
+		// Suppression windows are per-turn; discard stale counters
+		for (const v of this._suppressions.values()) if (v.timer) clearTimeout(v.timer);
+		this._suppressions.clear();
 		const actor = this._combatantActor(combatant);
 		this._state = {
 			active: true,
@@ -251,9 +281,21 @@ export class ActionTrackerTool {
 		if (!speaker || speaker.uuid !== actor.uuid) return;
 		if (message.isReroll) return;
 
+		// Per-message flag from OUR macros (hide = skip entirely, free = show as 0-cost).
+		// Any tool that creates its own ChatMessage can set
+		// `flags.pf2e-vibemodulerp.actionTracker = { hide:true }` or `{ free:true }`.
+		const trackerFlag = message.flags?.[Manager.id]?.actionTracker ?? null;
+		if (trackerFlag?.hide) return;
+
 		const flags = message.flags?.pf2e ?? {};
 		const context = flags.context ?? {};
 		const type = context.type ?? "";
+
+		// GM-routed suppression window (e.g. Flurry of Blows). `free` -> show as 0-cost,
+		// `hide` -> skip entirely. Checked before normal cost logic.
+		const suppression = this._consumeSuppression(speaker.uuid, type);
+		if (suppression === "hide") return;
+		const freeViaSuppression = suppression === "free" || !!trackerFlag?.free;
 
 		// pf2e `treatWoundsMacroCallback`Posts the healing roll as a separate
 		// ChatMessage that **copies** the original `context` (so it still looks
@@ -267,7 +309,7 @@ export class ActionTrackerTool {
 		// clicking the button applies the effect without posting another message,
 		// so the action is counted when its card appears.
 		if (type === "self-effect") {
-			this._logSelfEffect(speaker, context);
+			this._logSelfEffect(speaker, context, freeViaSuppression);
 			return;
 		}
 		if (this._skipTypes.has(type)) return;
@@ -276,7 +318,7 @@ export class ActionTrackerTool {
 		// posts an origin of {sourceId, uuid, type}, unlike an item card dropped
 		// into chat, whose origin carries {actor, uuid, type, rollOptions}.
 		if (!type && this._isConsumeMessage(flags.origin)) {
-			await this._logConsume(message, flags.origin);
+			await this._logConsume(message, flags.origin, freeViaSuppression);
 			return;
 		}
 
@@ -286,6 +328,7 @@ export class ActionTrackerTool {
 		if (!type && !flags.origin) {
 			const aux = this._parseAuxiliaryCard(message);
 			if (aux) {
+				if (freeViaSuppression) aux.cost = 0;
 				this._push(aux);
 				return;
 			}
@@ -332,8 +375,9 @@ export class ActionTrackerTool {
 				// ignore
 			}
 		}
-		const cost = this._resolveCost(item, type, context.title, context.options);
+		let cost = this._resolveCost(item, type, context.title, context.options);
 		if (cost === null) return;
+		if (freeViaSuppression) cost = 0;
 
 		const isSpell = !!item?.isOfType?.("spell");
 		let spellKey = null;
@@ -344,7 +388,7 @@ export class ActionTrackerTool {
 		}
 
 		const name = this._resolveName(item, context, type);
-		this._push({ name, cost, icon: this._iconFor(item, type, context.title, context.options), ...(spellKey ? { spellKey } : {}) });
+		this._push({ name, cost, icon: this._iconFor(item, type, context.title, context.options), ...(freeViaSuppression ? { free: true } : {}), ...(spellKey ? { spellKey } : {}) });
 	}
 
 	/**
@@ -659,12 +703,13 @@ export class ActionTrackerTool {
 	 * lives on the speaker — context.item is its id, not a uuid — and its cost
 	 * resolves like any other action/feat via `actionCost`.
 	 */
-	static _logSelfEffect(speaker, context) {
+	static _logSelfEffect(speaker, context, free = false) {
 		const item = speaker.items.get(context.item ?? "") ?? null;
 		if (!item) return;
-		const cost = this._resolveCost(item, "self-effect");
+		let cost = this._resolveCost(item, "self-effect");
 		if (cost === null) return;
-		this._push({ name: item.name, cost, icon: this._iconFor(item, "self-effect") });
+		if (free) cost = 0;
+		this._push({ name: item.name, cost, icon: this._iconFor(item, "self-effect"), ...(free ? { free: true } : {}) });
 	}
 
 	/**
@@ -672,7 +717,8 @@ export class ActionTrackerTool {
 	 * potions and friends): the actor Interacts to use it, 1 action. Detected
 	 * via the consume message's minimal origin (see `_isConsumeMessage`).
 	 */
-	static async _logConsume(message, origin) {
+	static async _logConsume(message, origin, free = false) {
+		const cost = free ? 0 : 1;
 		// Fast path: mirror pf2e's own resolution (MessagePF2e#item) — the same
 		// getter the Use button relies on — which works while the item still exists.
 		let item = message.item ?? null;
@@ -696,11 +742,11 @@ export class ActionTrackerTool {
 				.replace(/,\s*\d+\s*remain$/i, "")
 				.trim();
 			if (name) {
-				this._push({ name, cost: 1, icon: { fa: "fa-flask-vial" } });
+				this._push({ name, cost, icon: { fa: "fa-flask-vial" }, ...(free ? { free: true } : {}) });
 			}
 			return;
 		}
-		this._push({ name: item.name, cost: 1, icon: { img: item.img } });
+		this._push({ name: item.name, cost, icon: { img: item.img }, ...(free ? { free: true } : {}) });
 	}
 
 	/** True for a consumable "Use" message (minimal origin), not an item card
@@ -767,6 +813,168 @@ export class ActionTrackerTool {
 		this._state.movement = null;
 		this._state.warpMovement = null;
 		this._broadcast();
+	}
+
+	/* -------------------------------------------- */
+	/*  Suppression API (for OUR macros)             */
+	/* -------------------------------------------- */
+
+	/**
+	 * Suppress / make-free the next N actions of `actor`.
+	 *
+	 * Both `hide` (skip entirely) and `free` (show as 0-cost) are supported so
+	 * callers can choose per use-case. Filtered by `context.type` when `types`
+	 * is provided; `null`/`undefined` = any type.
+	 *
+	 * Examples:
+	 *   // Flurry: 2 Strikes become 0-cost, up to 2 Trip checks hidden
+	 *   await ActionTrackerTool.suppressNext(monk, {
+	 *     free: { count: 2, types: ["attack-roll"] },
+	 *     hide: { count: 2, types: ["skill-check"] }
+	 *   });
+	 *   // Any macro: hide the next single action regardless of type
+	 *   await ActionTrackerTool.suppressNext(actor, { hide: 1 });
+	 *   // Via per-message flag (no socket): set on your ChatMessage.create:
+	 *   // flags: { "pf2e-vibemodulerp": { actionTracker: { hide:true } } }
+	 *   // or { free:true }
+	 *
+	 * Cross-client: if called by a non-GM, the request is GM-routed over the
+	 * shared `module.pf2e-vibemodulerp` socket and the caller awaits the GM's ack
+	 * before returning, so following rolls aren't counted before the window is set.
+	 */
+	static async suppressNext(actor, opts = {}) {
+		const actorUuid = this._normalizeActorUuid(actor);
+		if (!actorUuid) return;
+		const parsed = this._parseSuppressOpts(opts);
+		if (!parsed.hide && !parsed.free) return;
+		if (game.user.isGM) {
+			this._applySuppression(actorUuid, parsed);
+			return;
+		}
+		const gm = game.users.find((u) => u.isGM && u.active);
+		if (!gm) return;
+		const requestId = foundry.utils.randomID();
+		const payload = {
+			action: SOCKET_ACTION_SUPPRESS,
+			requestId,
+			actorUuid,
+			hide: parsed.hide,
+			free: parsed.free,
+			hideTypes: parsed.hideTypes ? [...parsed.hideTypes] : null,
+			freeTypes: parsed.freeTypes ? [...parsed.freeTypes] : null
+		};
+		const ack = await new Promise((resolve) => {
+			const timer = setTimeout(() => { this._pendingSuppress.delete(requestId); resolve(false); }, SUPPRESS_ACK_TIMEOUT_MS);
+			this._pendingSuppress.set(requestId, { resolve, timer });
+			game.socket.emit(SOCKET_EVENT, payload, { recipients: [gm.id] });
+		});
+		return ack;
+	}
+
+	/** GM-routed: log a single action entry for `actor` (e.g. "Flurry of Blows" 1). */
+	static async logExternal(actor, entry) {
+		const actorUuid = this._normalizeActorUuid(actor);
+		if (!actorUuid) return;
+		const name = entry?.name ?? "Action";
+		const cost = Number.isFinite(entry?.cost) ? entry.cost : 1;
+		const icon = entry?.icon ?? { fa: "fa-star" };
+		if (game.user.isGM) {
+			if (!this._state.active || this._state.disabled) return;
+			const combatActor = game.combat?.combatant?.actor;
+			if (combatActor && combatActor.uuid !== actorUuid) {
+				// Still log for the active combatant's turn: attribute to the combatant
+				// but only if the caller explicitly targets the current combatant. If
+				// they don't match, push anyway - external macros are authoritative.
+			}
+			this._push({ name, cost, icon });
+			return;
+		}
+		const gm = game.users.find((u) => u.isGM && u.active);
+		if (!gm) return;
+		const requestId = foundry.utils.randomID();
+		const payload = { action: SOCKET_ACTION_LOG_EXTERNAL, requestId, actorUuid, name, cost, icon };
+		await new Promise((resolve) => {
+			const timer = setTimeout(() => { this._pendingLogExternal.delete(requestId); resolve(false); }, SUPPRESS_ACK_TIMEOUT_MS);
+			this._pendingLogExternal.set(requestId, { resolve, timer });
+			game.socket.emit(SOCKET_EVENT, payload, { recipients: [gm.id] });
+		});
+	}
+
+	/**
+	 * Atomic helper: log one entry (cost 1 Flurry) and suppress the following rolls.
+	 * Awaits both GM acks so rolls that follow are correctly hidden/freed.
+	 */
+	static async logAndSuppress(actor, { name, cost = 1, icon, suppress = {} } = {}) {
+		await this.logExternal(actor, { name, cost, icon });
+		if (suppress && (suppress.hide || suppress.free)) await this.suppressNext(actor, suppress);
+	}
+
+	static _normalizeActorUuid(actor) {
+		if (!actor) return null;
+		if (typeof actor === "string") return actor;
+		if (actor.uuid) return actor.uuid;
+		if (actor.actor?.uuid) return actor.actor.uuid;
+		return null;
+	}
+
+	static _parseSuppressOpts(opts) {
+		const out = { hide: 0, free: 0, hideTypes: null, freeTypes: null };
+		const parseOne = (v) => {
+			if (v == null) return { count: 0, types: null };
+			if (typeof v === "number") return { count: Math.max(0, v|0), types: null };
+			if (typeof v === "object" && "count" in v) {
+				const c = Math.max(0, Number(v.count)|0);
+				const t = Array.isArray(v.types) && v.types.length ? new Set(v.types.map(String)) : null;
+				return { count: c, types: t };
+			}
+			return { count: 0, types: null };
+		};
+		const h = parseOne(opts.hide);
+		const f = parseOne(opts.free);
+		out.hide = h.count; out.hideTypes = h.types;
+		out.free = f.count; out.freeTypes = f.types;
+		// Shorthand: { hide:2, free:2, types:["attack-roll"] } means both share the same types
+		if (opts.types && (!h.types && !f.types)) {
+			const shared = Array.isArray(opts.types) ? new Set(opts.types.map(String)) : null;
+			if (h.count) out.hideTypes = shared;
+			if (f.count) out.freeTypes = shared;
+		}
+		return out;
+	}
+
+	static _applySuppression(actorUuid, parsed) {
+		if (!actorUuid) return;
+		const existing = this._suppressions.get(actorUuid);
+		if (existing?.timer) clearTimeout(existing.timer);
+		const merged = {
+			hide: (existing?.hide ?? 0) + parsed.hide,
+			free: (existing?.free ?? 0) + parsed.free,
+			hideTypes: parsed.hideTypes ?? existing?.hideTypes ?? null,
+			freeTypes: parsed.freeTypes ?? existing?.freeTypes ?? null,
+			timer: null
+		};
+		// If both sides had type sets, intersect is not needed - keep the newest; caller should make one atomic call
+		merged.timer = setTimeout(() => this._suppressions.delete(actorUuid), SUPPRESSION_TIMEOUT_MS);
+		this._suppressions.set(actorUuid, merged);
+	}
+
+	static _consumeSuppression(actorUuid, type) {
+		const sup = this._suppressions.get(actorUuid);
+		if (!sup) return null;
+		const t = String(type ?? "");
+		const match = (set) => !set || set.has(t) || set.has("all") || set.has("");
+		// `free` takes priority when both match the same type (show as 0 rather than hide)
+		if (sup.free > 0 && match(sup.freeTypes)) {
+			sup.free--;
+			if (sup.free <= 0 && sup.hide <= 0) { clearTimeout(sup.timer); this._suppressions.delete(actorUuid); }
+			return "free";
+		}
+		if (sup.hide > 0 && match(sup.hideTypes)) {
+			sup.hide--;
+			if (sup.free <= 0 && sup.hide <= 0) { clearTimeout(sup.timer); this._suppressions.delete(actorUuid); }
+			return "hide";
+		}
+		return null;
 	}
 
 	/* -------------------------------------------- */
@@ -840,11 +1048,42 @@ export class ActionTrackerTool {
 
 	static _onSocketMessage(data, userId) {
 		try {
-			if (data?.action !== SOCKET_ACTION_STATE) return;
-			const sender = game.users.get(userId);
-			if (!sender?.isGM) return;
-			this._state = data.state;
-			this._render();
+			if (!data?.action) return;
+			// GM -> players: authoritative state sync
+			if (data.action === SOCKET_ACTION_STATE) {
+				const sender = game.users.get(userId);
+				if (!sender?.isGM) return;
+				this._state = data.state;
+				this._render();
+				return;
+			}
+			// Player -> GM: log an external entry (e.g. "Flurry of Blows" 1)
+			if (data.action === SOCKET_ACTION_LOG_EXTERNAL) {
+				if (!game.user.isGM) return;
+				const { requestId, actorUuid, name, cost, icon } = data;
+				if (this._state.active && !this._state.disabled) this._push({ name: name ?? "Action", cost: Number.isFinite(cost) ? cost : 1, icon: icon ?? { fa: "fa-star" } });
+				if (requestId) game.socket.emit(SOCKET_EVENT, { action: SOCKET_ACTION_LOG_EXTERNAL_RESULT, requestId, ok: true }, { recipients: [userId] });
+				return;
+			}
+			if (data.action === SOCKET_ACTION_LOG_EXTERNAL_RESULT) {
+				const p = this._pendingLogExternal.get(data.requestId);
+				if (p) { clearTimeout(p.timer); this._pendingLogExternal.delete(data.requestId); p.resolve(true); }
+				return;
+			}
+			// Player -> GM: install a suppression window
+			if (data.action === SOCKET_ACTION_SUPPRESS) {
+				if (!game.user.isGM) return;
+				const { requestId, actorUuid, hide, free, hideTypes, freeTypes } = data;
+				const parsed = { hide: Number(hide) || 0, free: Number(free) || 0, hideTypes: Array.isArray(hideTypes) ? new Set(hideTypes) : null, freeTypes: Array.isArray(freeTypes) ? new Set(freeTypes) : null };
+				this._applySuppression(actorUuid, parsed);
+				if (requestId) game.socket.emit(SOCKET_EVENT, { action: SOCKET_ACTION_SUPPRESS_RESULT, requestId, ok: true }, { recipients: [userId] });
+				return;
+			}
+			if (data.action === SOCKET_ACTION_SUPPRESS_RESULT) {
+				const p = this._pendingSuppress.get(data.requestId);
+				if (p) { clearTimeout(p.timer); this._pendingSuppress.delete(data.requestId); p.resolve(true); }
+				return;
+			}
 		} catch (error) {
 			console.error(`${Manager.id} | action-tracker socket handler failed`, error);
 		}

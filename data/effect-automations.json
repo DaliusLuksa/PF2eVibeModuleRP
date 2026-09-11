@@ -6,7 +6,8 @@
       "trigger": "turnStart",
       "roll": {
         "type": "reflex",
-        "dc": "20"
+        "dc": "20",
+        "useCasterDC": false
       },
       "removeOnTrigger": false,
       "outcomes": {
@@ -18,6 +19,29 @@
         "criticalFailure": [
           "Compendium.pf2e.spell-effects.Item.rjM25qfw5BKj9h97",
           "Compendium.pf2e.conditionitems.Item.eIcWbB5o3pP6OIMe"
+        ]
+      }
+    },
+    {
+      "id": "98aDqaB9oxk8hhvj",
+      "effectUuid": "Compendium.pf2e-vibemodulerp.calm-effects.Item.QalmVibes0000000",
+      "trigger": "onApplied",
+      "roll": {
+        "type": "will",
+        "dc": 20,
+        "useCasterDC": true
+      },
+      "removeOnTrigger": true,
+      "outcomes": {
+        "criticalSuccess": [],
+        "success": [
+          "Compendium.pf2e-vibemodulerp.calm-effects.Item.QalmMinor0000000"
+        ],
+        "failure": [
+          "Compendium.pf2e.spell-effects.Item.Qr5rgoZvI4KmFY0N"
+        ],
+        "criticalFailure": [
+          "Compendium.pf2e-vibemodulerp.calm-effects.Item.QalmAbsol0000000"
         ]
       }
     }

@@ -25,9 +25,12 @@ import { FlankingOffGuardTool } from "./tools/flanking-offguard.js";
 import { HandlebarsFixTool } from "./tools/handlebars-fix.js";
 import { InstantHiddenRollsTool } from "./tools/instant-hidden-rolls.js";
 import { MonkFlurryTool } from "./tools/monk-flurry.js";
+import { CalendariaCombatClockTool } from "./tools/calendaria-combat-clock.js";
+import { TimedRegenerationTool } from "./tools/timed-regeneration.js";
+import { TraitPropagationTool } from "./tools/trait-propagation.js";
 
 Hooks.once("init", () => {
-	Manager.register(TemplateEffectsTool).register(ShieldedArmTool).register(CalmEffectsTool).register(InvisibleTokenTool).register(HideCursorTool).register(SpellShieldTrackerTool).register(AttributeRollTool).register(PopoutInitiativeTool).register(PopoutSortableRepairTool).register(VolumePersistenceTool).register(SustainReminderTool).register(EffectAnimationTool).register(ActionTrackerTool).register(RollCounterTool).register(ClearTurnTargetsTool).register(FrightenedDecayTool).register(DyingAutomationTool).register(ShatteringGemTool).register(AreaEffectsTool).register(FeatureHubTool).register(EffectAutomatorTool).register(LightTetherTool).register(FlankingOffGuardTool).register(HandlebarsFixTool).register(InstantHiddenRollsTool).register(MonkFlurryTool).registerSettings();
+	Manager.register(TemplateEffectsTool).register(ShieldedArmTool).register(CalmEffectsTool).register(InvisibleTokenTool).register(HideCursorTool).register(SpellShieldTrackerTool).register(AttributeRollTool).register(PopoutInitiativeTool).register(PopoutSortableRepairTool).register(VolumePersistenceTool).register(SustainReminderTool).register(EffectAnimationTool).register(ActionTrackerTool).register(RollCounterTool).register(ClearTurnTargetsTool).register(FrightenedDecayTool).register(DyingAutomationTool).register(ShatteringGemTool).register(AreaEffectsTool).register(FeatureHubTool).register(EffectAutomatorTool).register(LightTetherTool).register(FlankingOffGuardTool).register(HandlebarsFixTool).register(InstantHiddenRollsTool).register(MonkFlurryTool).register(CalendariaCombatClockTool).register(TimedRegenerationTool).register(TraitPropagationTool).registerSettings();
 	Manager.initialize();
 	Manager.boot();
 });

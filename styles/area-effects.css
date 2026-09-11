@@ -57,6 +57,21 @@
   font-size: var(--font-size-12);
 }
 
+/* Terrain row: labels top-aligned so "Applies to" sits level with "Terrain". */
+.ae-terrain-row {
+  align-items: flex-start;
+}
+
+/* Terrain Stride/Fly flags column sitting beside the Terrain select. */
+.ae-terrain-flags {
+  flex: none;
+  min-width: 6.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  justify-content: flex-start;
+}
+
 .ae-field input[type="text"],
 .ae-field input[type="number"],
 .ae-field select {

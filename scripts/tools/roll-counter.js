@@ -38,6 +38,13 @@ export class RollCounterTool {
 			scope: "world",
 			config: true,
 			onChange: () => RollCounterTool._render()
+		},
+		{
+			key: "pruneOldSessions",
+			type: Boolean,
+			default: true,
+			scope: "world",
+			config: true
 		}
 	];
 
@@ -83,7 +90,42 @@ export class RollCounterTool {
 			console.warn(`${Manager.id} | roll-counter could not read persisted state`, error);
 			this._state = { entries: [] };
 		}
+		const pruned = this._pruneToRetention();
+		if (pruned > 0 && game.user?.isGM) this._persistState();
 		this._seen = new Set(this._state.entries.map((entry) => entry?.id).filter(Boolean));
+	}
+
+	/**
+	 * Retention: keep today + the 10 most recent past session-days (11 keys
+	 * total in the dropdown). Only runs on initial load (GM persists the
+	 * trimmed log). Gated by the `pruneOldSessions` world setting.
+	 * @returns {number} how many entries were dropped
+	 */
+	static _pruneToRetention() {
+		try {
+			if (!game.settings.get(Manager.id, `${this.id}.pruneOldSessions`)) return 0;
+		} catch (_) {
+			return 0;
+		}
+		const PAST_DAYS = 10;
+		const entries = this._state.entries;
+		if (!entries?.length) return 0;
+		const today = this._dayKey(Date.now());
+		const pastDays = new Set();
+		for (const entry of entries) {
+			const day = this._dayKey(entry.ts);
+			if (day !== today) pastDays.add(day);
+		}
+		if (pastDays.size <= PAST_DAYS) return 0;
+		const keepPast = new Set([...pastDays].sort((a, b) => b.localeCompare(a)).slice(0, PAST_DAYS));
+		keepPast.add(today);
+		const before = entries.length;
+		this._state.entries = entries.filter((entry) => keepPast.has(this._dayKey(entry.ts)));
+		const removed = before - this._state.entries.length;
+		if (removed > 0) {
+			console.debug(`${Manager.id} | roll-counter pruned ${removed} entries older than ${PAST_DAYS} session-days (kept today + ${PAST_DAYS} past days)`);
+		}
+		return removed;
 	}
 
 	/** GM-only: persist the authoritative log so reloads/joiners can restore it. */

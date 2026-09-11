@@ -20,7 +20,10 @@
     "durationMode": "caster"
   },
   "Calm": {
-    "window": "instant"
+    "window": "instant",
+    "effects": [
+      "Compendium.pf2e-vibemodulerp.calm-effects.Item.QalmVibes0000000"
+    ]
   },
-  "_help": "Key each entry by an exact spell NAME. Value is either an array of Item UUIDs (just the effects) or an object: { window: \"persistent\"|\"instant\" (which tab opens after clicking Place), effects: [Item UUIDs], mode: \"inside\"|\"once\", duration: rounds (0=unlimited), durationMode: \"combat\"|\"caster\", terrain: \"difficult\"|\"greater\" (optional, makes the area difficult/greater difficult terrain on the token ruler; walking only) }. Effects are PF2e spell-effect Item UUIDs (grab them from any effect, e.g. Compendium.pf2e.spell-effects.Item.<id>)."
+  "_help": "Key each entry by an exact spell NAME. Value is either an array of Item UUIDs (just the effects) or an object: { window: \"persistent\"|\"instant\" (which tab opens after clicking Place), effects: [Item UUIDs], mode: \"inside\"|\"once\", duration: rounds (0=unlimited), durationMode: \"combat\"|\"caster\", terrain: \"difficult\"|\"greater\" (optional, makes the area difficult/greater difficult terrain on the token ruler), terrainStride: true/false (default true), terrainFly: true/false (default false) }. Effects are PF2e spell-effect Item UUIDs (grab them from any effect, e.g. Compendium.pf2e.spell-effects.Item.<id>)."
 }

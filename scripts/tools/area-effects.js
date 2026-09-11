@@ -3,7 +3,7 @@ import { rememberWindowPosition } from "../core/window-positions.js";
 
 const BEHAVIOR_TYPE = `${Manager.id}.areaEffects`;
 // Core v14 region behavior that makes the ruler cost extra movement inside the
-// region (`system.difficulties.walk`: 2 = difficult terrain, 3 = greater).
+// region (`system.difficulties.walk/fly`: 2 = difficult terrain, 3 = greater).
 const TERRAIN_BEHAVIOR_TYPE = "modifyMovementCost";
 const MODULE_ROOT = "modules/pf2e-vibemodulerp";
 const SPELL_EFFECTS_CONFIG = `${MODULE_ROOT}/data/spell-effects.json`;
@@ -44,6 +44,9 @@ export class AreaEffectsTool {
 
 	/** Pending GM effect-apply/remove requests, keyed by request id. */
 	static _pendingGmRequests = new Map();
+
+	/** Tracks last known downed/dead (0 HP) state per actor to detect revivals while staying inside. */
+	static _wasDowned = new Map();
 
 	/** The single open management window instance. */
 	static _window = null;
@@ -125,6 +128,9 @@ export class AreaEffectsTool {
 		});
 		Hooks.on("createToken", () => this._renderTokenCountIfOpen());
 		Hooks.on("deleteToken", () => this._renderTokenCountIfOpen());
+		Hooks.on("updateActor", this._onActorStatusChange.bind(this));
+		Hooks.on("createItem", this._onItemMaybeDead.bind(this));
+		Hooks.on("deleteItem", this._onItemMaybeRevived.bind(this));
 		this._patchSpellTemplateButton();
 		this._loadSpellEffectsConfig();
 		console.debug(`${Manager.id} | hooks installed`);
@@ -156,6 +162,7 @@ export class AreaEffectsTool {
 			// Build a pf2e origin payload so Automated Animations can resolve the
 			// spell Item (flags.pf2e.origin.uuid) and play its recipe (e.g. the
 			// Entangling Flora vine animation) when the area is eventually placed.
+			// Also carry the caster actor uuid for Effect Automator's Caster's DC.
 			const origin = this?.getOriginData?.() ?? {};
 			const pf2eFlags = {
 				origin: {
@@ -163,7 +170,8 @@ export class AreaEffectsTool {
 					name: this.name,
 					slug: this.slug,
 					traits: foundry.utils.deepClone(this.system?.traits?.value ?? []),
-					...origin
+					...origin,
+					...(this.actor?.uuid ? { actorUuid: this.actor.uuid } : {})
 				},
 				areaShape: area.type
 			};
@@ -211,12 +219,26 @@ export class AreaEffectsTool {
 	static _normalizeConfigEntry(entry) {
 		if (Array.isArray(entry)) return { effects: entry };
 		if (entry && typeof entry === "object") {
+			let terrain = entry.terrain === "greater" ? "greater" : entry.terrain === "difficult" ? "difficult" : "";
+			// Stride/Fly flags for the terrain ruler (JSON keys: terrainStride/terrainFly or stride/fly).
+			let terrainStride = true;
+			let terrainFly = false;
+			if ("terrainStride" in entry) terrainStride = !!entry.terrainStride;
+			else if ("stride" in entry) terrainStride = !!entry.stride;
+			else if ("terrain_stride" in entry) terrainStride = !!entry.terrain_stride;
+			if ("terrainFly" in entry) terrainFly = !!entry.terrainFly;
+			else if ("fly" in entry) terrainFly = !!entry.fly;
+			else if ("terrain_fly" in entry) terrainFly = !!entry.terrain_fly;
+			// Both off => treat as no terrain per spec.
+			if (terrain && !terrainStride && !terrainFly) terrain = "";
 			return {
 				effects: Array.isArray(entry.effects) ? entry.effects : [],
 				mode: entry.mode === "once" ? "once" : "inside",
 				duration: Math.max(0, Number(entry.duration) || 0),
 				durationMode: entry.durationMode === "combat" ? "combat" : "caster",
-				terrain: entry.terrain === "greater" ? "greater" : entry.terrain === "difficult" ? "difficult" : "",
+				terrain,
+				terrainStride,
+				terrainFly,
 				window: (entry.window === "instant" || entry.tab === "instant") ? "instant" : "persistent"
 			};
 		}
@@ -247,6 +269,10 @@ export class AreaEffectsTool {
 			p.duration = preset.duration ?? 0;
 			p.durationMode = preset.durationMode ?? "caster";
 			p.terrain = preset.terrain ?? "";
+			p.terrainStride = preset.terrainStride ?? true;
+			p.terrainFly = preset.terrainFly ?? false;
+			// Both off => reset to None per spec.
+			if (p.terrain && !p.terrainStride && !p.terrainFly) p.terrain = "";
 			if (preset.window === "instant") {
 				this._window._instantDraft.effects = Array.from(preset.effects ?? []);
 			}
@@ -371,30 +397,42 @@ export class AreaEffectsTool {
 	 * performs the interactive placement but asks a connected GM to build the
 	 * region + behavior over the module socket (the standard GM-routing pattern).
 	 */
-	/** Map a terrain setting ("difficult"/"greater") to a walk movement cost. */
+	/** Map a terrain setting ("difficult"/"greater") to a numeric movement cost. */
 	static _walkDifficulty(terrain) {
 		return terrain === "greater" ? 3 : terrain === "difficult" ? 2 : 1;
+	}
+
+	/** Build the `difficulties` map for `modifyMovementCost` from terrain + flags. */
+	static _terrainDifficulties(terrain, stride, fly) {
+		const cost = this._walkDifficulty(terrain);
+		if (cost <= 1) return null;
+		// If both flags are off, treat as None per spec (caller will also reset terrain).
+		if (!stride && !fly) return null;
+		const difficulties = {};
+		if (stride) difficulties.walk = cost;
+		if (fly) difficulties.fly = cost;
+		return Object.keys(difficulties).length ? difficulties : null;
 	}
 
 	/**
 	 * The behavior documents for a new area: the effect-applying behavior plus,
 	 * when a terrain setting is chosen, a core `modifyMovementCost` behavior that
-	 * makes the ruler cost extra movement inside the area (walk only, so flying
-	 * creatures are unaffected; crawl/climb inherit walk and jump derives from
-	 * max(walk, fly), matching the PF2e difficult-terrain rules).
+	 * makes the ruler cost extra movement inside the area. Stride maps to `walk`
+	 * (covers Stride/crawl/climb), Fly maps to `fly` (jump uses max(walk,fly)).
 	 */
-	static _behaviorDocs(system, walkDifficulty) {
+	static _behaviorDocs(system, difficulties) {
 		const behaviors = [{
 			name: Manager.localize("areaEffects.behaviorLabel"),
 			type: BEHAVIOR_TYPE,
 			system,
 			disabled: false
 		}];
-		if (walkDifficulty > 1) {
+		if (difficulties) {
+			const cost = Math.max(...Object.values(difficulties));
 			behaviors.push({
-				name: Manager.localize(walkDifficulty > 2 ? "areaEffects.terrainGreater" : "areaEffects.terrainDifficult"),
+				name: Manager.localize(cost > 2 ? "areaEffects.terrainGreater" : "areaEffects.terrainDifficult"),
 				type: TERRAIN_BEHAVIOR_TYPE,
-				system: { difficulties: { walk: walkDifficulty } },
+				system: { difficulties },
 				disabled: false
 			});
 		}
@@ -407,12 +445,14 @@ export class AreaEffectsTool {
 		const size = Math.max(5, Number(config.size) || 5);
 		const { x, y } = canvas.mousePosition;
 		const gmOnly = game.user.isGM && !!config.gmOnly;
+		const casterActorUuid = config.pf2eFlags?.origin?.actorUuid ?? config.pf2eFlags?.origin?.actor ?? game.user.character?.uuid ?? canvas.tokens.controlled?.[0]?.actor?.uuid ?? null;
 		const flags = {
 			[Manager.id]: {
 				areaEffects: true,
 				author: game.user.id,
 				private: !!config.isPrivate,
-				gmOnly
+				gmOnly,
+				...(casterActorUuid ? { casterActorUuid } : {})
 			}
 		};
 		// If this area came from a spell's "Place template" button, carry the
@@ -429,13 +469,17 @@ export class AreaEffectsTool {
 			flags
 		};
 		const system = this._behaviorSystem(config);
-		const walkDifficulty = this._walkDifficulty(config.terrain);
+		const stride = config.terrainStride ?? true;
+		const fly = config.terrainFly ?? false;
+		let terrain = config.terrain ?? "";
+		if (terrain && !stride && !fly) terrain = "";
+		const difficulties = this._terrainDifficulties(terrain, stride, fly);
 
 		if (game.user.isGM) {
 			// GM: create directly (placeRegion awaits the user's click).
 			const region = await canvas.regions.placeRegion(data);
 			if (!region) return { cancelled: true }; // right-click / dismiss — silent
-			await region.createEmbeddedDocuments("RegionBehavior", this._behaviorDocs(system, walkDifficulty));
+			await region.createEmbeddedDocuments("RegionBehavior", this._behaviorDocs(system, difficulties));
 			return region;
 		}
 
@@ -451,11 +495,11 @@ export class AreaEffectsTool {
 			ui.notifications.error(Manager.localize("areaEffects.notifyNoGmPlace"));
 			return null;
 		}
-		return this._requestGmPlace(gm, sceneId, regionData, system, walkDifficulty);
+		return this._requestGmPlace(gm, sceneId, regionData, system, difficulties);
 	}
 
 	/** Ask a connected GM to create the region + behavior; resolve on completion. */
-	static _requestGmPlace(gm, sceneId, regionData, system, walkDifficulty = 1) {
+	static _requestGmPlace(gm, sceneId, regionData, system, difficulties = null) {
 		return new Promise((resolve) => {
 			const requestId = foundry.utils.randomID();
 			const timer = setTimeout(() => {
@@ -469,7 +513,7 @@ export class AreaEffectsTool {
 				sceneId,
 				regionData,
 				system,
-				walkDifficulty
+				difficulties
 			}, { recipients: [gm.id] });
 		});
 	}
@@ -491,6 +535,7 @@ export class AreaEffectsTool {
 		const kind = config.kind ?? "burst";
 		const size = Math.max(5, Number(config.size) || 5);
 		const { x, y } = canvas.mousePosition;
+		const casterActorUuid = config.pf2eFlags?.origin?.actorUuid ?? config.pf2eFlags?.origin?.actor ?? game.user.character?.uuid ?? canvas.tokens.controlled?.[0]?.actor?.uuid ?? null;
 		const data = {
 			name: config.name || Manager.localize("areaEffects.instantDefaultName"),
 			shapes: [this._shapeData(kind, size, x, y)],
@@ -499,7 +544,7 @@ export class AreaEffectsTool {
 			displayMeasurements: true,
 			visibility: CONST.REGION_VISIBILITY.ALWAYS,
 			flags: {
-				[Manager.id]: { areaEffects: true, author: game.user.id, instant: true },
+				[Manager.id]: { areaEffects: true, author: game.user.id, instant: true, ...(casterActorUuid ? { casterActorUuid } : {}) },
 				...(config.pf2eFlags ? { pf2e: config.pf2eFlags } : {})
 			}
 		};
@@ -533,8 +578,9 @@ export class AreaEffectsTool {
 	/**
 	 * Tokens geometrically inside `region`, filtered exactly like the old
 	 * Template Effects targeting dialog (TemplateEffectsTool._filterTargets):
-	 * self-token exclusion unless included, hidden/dead tokens skipped, and
-	 * neutral (alliance-less) actors only when explicitly included.
+	 * self-token exclusion unless included, hidden/dead-or-downed tokens
+	 * skipped, and neutral (alliance-less) actors only when explicitly
+	 * included.
 	 */
 	static _tokensInside(region, opts = {}) {
 		const targetFilter = ["allies", "enemies"].includes(opts.targetFilter) ? opts.targetFilter : "all";
@@ -554,7 +600,7 @@ export class AreaEffectsTool {
 			if (selfToken && token.id === selfToken.id) continue;
 			if (!token.object || token.hidden) continue;
 			const actor = token.actor;
-			if (!actor?.isOfType?.("creature", "hazard", "vehicle") || actor.isDead) continue;
+			if (!actor?.isOfType?.("creature", "hazard", "vehicle") || this._isDowned(actor)) continue;
 			const alliance = actor.alliance;
 			if (alliance === null && !opts.includeNeutral) continue;
 			if (want && alliance !== want) continue;
@@ -579,7 +625,7 @@ export class AreaEffectsTool {
 		}
 		for (const item of items) {
 			for (const token of tokens) {
-				await this._applyEffect(region.uuid, item, token);
+				await this._applyEffect(region.uuid, item, token, region);
 			}
 		}
 		return tokens.map((token) => token.id);
@@ -847,9 +893,12 @@ export class AreaEffectsTool {
 	 * traced back and removed. Used on `tokenEnter`. Skips actors that already
 	 * carry the unexpired effect from this same area.
 	 */
-	static async _applyEffect(originUuid, effectItem, token) {
+	static async _applyEffect(originUuid, effectItem, token, _region = null) {
 		const actor = token.actor;
 		if (!actor?.isOfType?.("creature", "hazard", "vehicle")) return;
+		// Downed (0 HP) and dead actors never gain effects - a PC that drops
+		// inside the area and later re-enters must not be re-affected.
+		if (this._isDowned(actor)) return;
 		const effectUuid = effectItem?.uuid;
 		if (!effectUuid) return;
 		// Only one copy of the same source effect per area at a time.
@@ -859,12 +908,45 @@ export class AreaEffectsTool {
 			&& !item?.isExpired
 		);
 		if (has) return;
+		// Resolve caster for Effect Automator's Caster's DC: prefer region's pf2e origin spell's actor
+		let originActorUuid = null;
+		let originItemUuid = null;
+		try {
+			const region = _region ?? (originUuid?.startsWith?.("Region.") ? canvas.scene?.regions?.get(originUuid.split(".").pop?.() ?? originUuid) ?? null : null) ?? (() => {
+				// originUuid may be a behavior uuid like "RegionBehavior.xxx" — find its region
+				for ( const r of canvas.scene?.regions ?? [] ) {
+					if ( r.behaviors?.some?.((b) => b.uuid === originUuid) ) return r;
+				}
+				return null;
+			})();
+			const pf2eOrigin = region?.getFlag?.("pf2e", "origin") ?? region?.flags?.pf2e?.origin ?? null;
+			if ( pf2eOrigin?.uuid ) {
+				originItemUuid = pf2eOrigin.uuid;
+				// Spell uuid like Actor.<id>.Item.<id> or Compendium...
+				try {
+					const spellDoc = await foundry.utils.fromUuid(pf2eOrigin.uuid).catch(() => null) ?? foundry.utils.fromUuidSync(pf2eOrigin.uuid) ?? null;
+					if ( spellDoc?.actor?.uuid ) originActorUuid = spellDoc.actor.uuid;
+					else if ( pf2eOrigin.actorUuid ) originActorUuid = pf2eOrigin.actorUuid;
+				} catch {}
+				if ( !originActorUuid && pf2eOrigin.actorUuid ) originActorUuid = pf2eOrigin.actorUuid;
+			}
+			// Fallback: region flag set by _patchSpellTemplateButton
+			if ( !originActorUuid ) originActorUuid = region?.getFlag?.(Manager.id, "casterActorUuid") ?? null;
+			if ( !originActorUuid && pf2eOrigin?.actorUuid ) originActorUuid = pf2eOrigin.actorUuid;
+		} catch {}
 		const source = foundry.utils.mergeObject(effectItem.toObject(), {
 			_id: null,
 			flags: {
 				[Manager.id]: { ...(effectItem.flags?.[Manager.id] ?? {}), areaOrigin: originUuid, areaSource: effectUuid }
 			}
 		}, { overwrite: false });
+		if ( originActorUuid || originItemUuid ) {
+			source.system ??= {};
+			source.system.context ??= {};
+			source.system.context.origin ??= {};
+			if ( originActorUuid ) source.system.context.origin.actor = originActorUuid;
+			if ( originItemUuid ) source.system.context.origin.item = originItemUuid;
+		}
 		if (actor.testUserPermission(game.user, "OWNER")) {
 			await actor.createEmbeddedDocuments("Item", [source]);
 		} else {
@@ -918,6 +1000,177 @@ export class AreaEffectsTool {
 	}
 
 	/* -------------------------------------------- */
+	/*  Death handling                              */
+	/* -------------------------------------------- */
+
+	/**
+	 * Whether an actor is out of the fight for PAE purposes: dead (Dead
+	 * condition) or downed at 0 Hit Points. This is broader than pf2e's
+	 * `isDead`, which returns false for a creature at 0 HP that also has the
+	 * dying or unconscious conditions - exactly the state a PC lands in right
+	 * after a lethal hit, so `isDead` alone let such actors be re-affected
+	 * when they re-entered the area. Downed/dead actors never gain PAE
+	 * effects, and dropping to 0 HP while inside removes them like leaving.
+	 */
+	static _isDowned(actor) {
+		if (!actor) return false;
+		if (actor.isDead) return true;
+		const hp = actor.hitPoints;
+		return !!hp && Number(hp.max) > 0 && hp.value != null && Number(hp.value) === 0;
+	}
+
+	/**
+	 * Track downed/dead transitions. When an actor becomes downed (0 HP, with
+	 * or without dying/unconscious) or dead, strip any PAE effects that were
+	 * bound via `mode:"inside"` - the same as leaving the area. When they
+	 * recover (HP back above 0 / dead removed) while still inside, re-apply
+	 * the area's effects. Only the client whose action caused the change acts
+	 * (`userId` guard), and both paths reuse the GM-routed helpers.
+	 */
+	static async _onActorStatusChange(actor, _change, _options, userId) {
+		try {
+			if (userId !== game.user.id) return;
+			if (!actor) return;
+			const downed = this._isDowned(actor);
+			const wasDowned = this._wasDowned.get(actor.uuid);
+			this._wasDowned.set(actor.uuid, downed);
+			if (downed && wasDowned !== true) {
+				if (!actor.items.some((item) => item.getFlag(Manager.id, "areaOrigin"))) return;
+				await this._removeAreaEffectsFromDownedActor(actor);
+			} else if (!downed && wasDowned === true) {
+				await this._reapplyAreaEffectsToRevivedActor(actor);
+			}
+		} catch (error) {
+			console.error(`${Manager.id} | area-effects status change failed`, error);
+		}
+	}
+
+	static async _onItemMaybeDead(item, _options, userId) {
+		try {
+			if (userId !== game.user.id) return;
+			if (item?.type !== "condition") return;
+			const slug = item.slug ?? item.system?.slug;
+			if (slug !== "dead") return;
+			const actor = item.actor;
+			if (!actor) return;
+			// Keep the downed map in sync even though the create itself doesn't
+			// yet imply the updateActor transition has fired.
+			this._wasDowned.set(actor.uuid, this._isDowned(actor));
+			if (!this._isDowned(actor)) return;
+			if (!actor.items.some((i) => i.getFlag(Manager.id, "areaOrigin"))) return;
+			await this._removeAreaEffectsFromDownedActor(actor);
+		} catch (error) {
+			console.error(`${Manager.id} | area-effects dead-condition cleanup failed`, error);
+		}
+	}
+
+	static async _onItemMaybeRevived(item, _options, userId) {
+		try {
+			if (userId !== game.user.id) return;
+			if (item?.type !== "condition") return;
+			const slug = item.slug ?? item.system?.slug;
+			if (slug !== "dead") return;
+			const actor = item.actor;
+			if (!actor) return;
+			const downed = this._isDowned(actor);
+			const wasDowned = this._wasDowned.get(actor.uuid);
+			this._wasDowned.set(actor.uuid, downed);
+			// Deleting the dead condition may not fire updateActor, so handle
+			// the revival here. Only re-apply when the actor is genuinely back
+			// (not still at 0 HP), so clearing Dead from a downed body can't
+			// re-add the area's effects.
+			if (!downed && wasDowned === true) {
+				await this._reapplyAreaEffectsToRevivedActor(actor);
+			} else if (!downed && wasDowned === undefined) {
+				// First time we see this actor as alive after a dead deletion
+				// without a prior map entry - still re-apply if inside.
+				await this._reapplyAreaEffectsToRevivedActor(actor);
+			}
+		} catch (error) {
+			console.error(`${Manager.id} | area-effects revive cleanup failed`, error);
+		}
+	}
+
+	/**
+	 * For a now-downed/dead actor, remove every `inside`-mode PAE effect whose
+	 * region currently contains one of the actor's tokens. Downed actors are
+	 * also prevented from ever gaining new effects via the guard in
+	 * `_applyEffect` / `#onTokenEnter`.
+	 */
+	static async _removeAreaEffectsFromDownedActor(actor) {
+		if (!actor || !this._isDowned(actor)) return;
+		if (!canvas.scene) return;
+		const flagged = actor.items.filter((item) => item.getFlag(Manager.id, "areaOrigin"));
+		if (!flagged.length) return;
+		// Tokens of this actor on the current scene (linked + unlinked).
+		let tokenDocs = [];
+		try {
+			tokenDocs = actor.getActiveTokens?.(false, true) ?? [];
+		} catch { tokenDocs = []; }
+		// Fallback: direct scene scan by actorId (covers edge cases).
+		if (!tokenDocs.length) {
+			for (const token of canvas.scene.tokens) {
+				if (token.actorId === actor.id || token.actor?.id === actor.id) tokenDocs.push(token);
+			}
+		}
+		if (!tokenDocs.length) return;
+		for (const region of canvas.scene.regions) {
+			if (!this._isOwnRegion(region)) continue;
+			const behavior = region.behaviors.find((b) => b.type === BEHAVIOR_TYPE);
+			if (!behavior || behavior.disabled) continue;
+			if ((behavior.system?.mode ?? "inside") !== "inside") continue;
+			const origin = behavior.uuid;
+			if (!flagged.some((item) => item.getFlag(Manager.id, "areaOrigin") === origin)) continue;
+			for (const token of tokenDocs) {
+				try {
+					if (!token.testInsideRegion(region)) continue;
+				} catch { continue; }
+				await this._removeEffects(origin, token);
+			}
+		}
+	}
+
+	/**
+	 * Re-apply `inside`-mode PAE effects to a revived actor that is still
+	 * geometrically inside a region. Mirrors `tokenEnter` but triggered by
+	 * the HP/condition transition rather than movement.
+	 */
+	static async _reapplyAreaEffectsToRevivedActor(actor) {
+		if (!actor || this._isDowned(actor)) return;
+		if (!actor.isOfType?.("creature", "hazard", "vehicle")) return;
+		if (!canvas.scene) return;
+		let tokenDocs = [];
+		try {
+			tokenDocs = actor.getActiveTokens?.(false, true) ?? [];
+		} catch { tokenDocs = []; }
+		if (!tokenDocs.length) {
+			for (const token of canvas.scene.tokens) {
+				if (token.actorId === actor.id || token.actor?.id === actor.id) tokenDocs.push(token);
+			}
+		}
+		if (!tokenDocs.length) return;
+		for (const region of canvas.scene.regions) {
+			if (!this._isOwnRegion(region)) continue;
+			const behavior = region.behaviors.find((b) => b.type === BEHAVIOR_TYPE);
+			if (!behavior || behavior.disabled) continue;
+			if ((behavior.system?.mode ?? "inside") !== "inside") continue;
+			const effectUuids = Array.from(behavior.system?.effects ?? []);
+			if (!effectUuids.length) continue;
+			const origin = behavior.uuid;
+			for (const token of tokenDocs) {
+				try {
+					if (!token.testInsideRegion(region)) continue;
+				} catch { continue; }
+				for (const effectUuid of effectUuids) {
+					const effect = await foundry.utils.fromUuid(effectUuid).catch(() => null);
+					if (!effect) continue;
+					await this._applyEffect(origin, effect, token, region);
+				}
+			}
+		}
+	}
+
+	/* -------------------------------------------- */
 	/*  Socket handling                             */
 	/* -------------------------------------------- */
 
@@ -949,7 +1202,7 @@ export class AreaEffectsTool {
 
 	/** GM-only: create the region + behavior requested by a non-GM and report back. */
 	static async _handleGmPlaceRequest(data, userId) {
-		const { requestId, sceneId, regionData, system, walkDifficulty } = data;
+		const { requestId, sceneId, regionData, system } = data;
 		let success = false;
 		let name = "";
 		let tokenIds = [];
@@ -968,7 +1221,13 @@ export class AreaEffectsTool {
 					});
 					await region.delete();
 				} else {
-					await region.createEmbeddedDocuments("RegionBehavior", this._behaviorDocs(system, Number(walkDifficulty) || 1));
+					// Backwards compat: old clients sent walkDifficulty; new send difficulties map.
+					let difficulties = data.difficulties ?? null;
+					if (!difficulties && data.walkDifficulty != null) {
+						const n = Math.max(1, Number(data.walkDifficulty) || 1);
+						if (n > 1) difficulties = { walk: n };
+					}
+					await region.createEmbeddedDocuments("RegionBehavior", this._behaviorDocs(system, difficulties));
 				}
 				success = true;
 				name = region.name;
@@ -1180,10 +1439,18 @@ export class AreaEffectsTool {
 				name: this._displayName(uuid)
 			}));
 			const terrainBehavior = region.behaviors.find((b) => b.type === TERRAIN_BEHAVIOR_TYPE);
-			const walkDifficulty = Math.max(1, Number(terrainBehavior?.system?.difficulties?.walk ?? 1));
-			const terrainText = walkDifficulty > 1
-				? Manager.localize(walkDifficulty > 2 ? "areaEffects.terrainGreater" : "areaEffects.terrainDifficult")
-				: "";
+			const diffs = terrainBehavior?.system?.difficulties ?? {};
+			const walkDifficulty = Math.max(1, Number(diffs.walk ?? 1));
+			const flyDifficulty = Math.max(1, Number(diffs.fly ?? 1));
+			const maxDifficulty = Math.max(walkDifficulty, flyDifficulty);
+			let terrainText = "";
+			if (maxDifficulty > 1) {
+				terrainText = Manager.localize(maxDifficulty > 2 ? "areaEffects.terrainGreater" : "areaEffects.terrainDifficult");
+				const parts = [];
+				if (walkDifficulty > 1) parts.push(Manager.localize("areaEffects.terrainStride"));
+				if (flyDifficulty > 1) parts.push(Manager.localize("areaEffects.terrainFly"));
+				if (parts.length) terrainText += ` (${parts.join(", ")})`;
+			}
 			areas.push({
 				id: region.id,
 				name: region.name,
@@ -1259,12 +1526,16 @@ class VibeAreaEffectRegionBehaviorType extends foundry.data.regionBehaviors.Regi
 		const { token } = event.data;
 		const actor = token?.actor;
 		if (!actor?.isOfType?.("creature", "hazard", "vehicle")) return;
+		// Dead/downed (0 HP) actors never gain effects - leaving the area and
+		// re-entering must not re-apply to a PC that is out of the fight.
+		if (AreaEffectsTool._isDowned(actor)) return;
 		const origin = this.behavior.uuid;
+		const region = this.behavior?.region ?? this.region ?? this.behavior?.parent ?? null;
 		const effectUuids = Array.from(this.effects ?? []);
 		for (const effectUuid of effectUuids) {
 			const effect = await foundry.utils.fromUuid(effectUuid).catch(() => null);
 			if (!effect) continue;
-			await AreaEffectsTool._applyEffect(origin, effect, token);
+			await AreaEffectsTool._applyEffect(origin, effect, token, region);
 		}
 	}
 
@@ -1332,8 +1603,8 @@ class AreaEffectsWindow extends rememberWindowPosition(
 	/** Increments per Place click so superseded placements can be ignored. */
 	_placeSeq = 0;
 
-	static PERSISTENT_DEFAULTS = { kind: "burst", size: 20, mode: "inside", name: "", effects: [], duration: 0, durationMode: "caster", private: false, gmOnly: false, terrain: "" };
-	static INSTANT_DEFAULTS = { kind: "burst", size: 20, effects: [], targetFilter: "all", includeSelf: false, includeNeutral: false };
+	static PERSISTENT_DEFAULTS = { kind: "burst", size: 20, mode: "inside", name: "", effects: [], duration: 0, durationMode: "caster", private: false, gmOnly: false, terrain: "", terrainStride: true, terrainFly: false };
+	static INSTANT_DEFAULTS = { kind: "burst", size: 20, effects: [], targetFilter: "all", includeSelf: true, includeNeutral: true, closeAfterPlacing: true };
 
 	_newPersistentDraft() {
 		return foundry.utils.deepClone(AreaEffectsWindow.PERSISTENT_DEFAULTS);
@@ -1345,6 +1616,13 @@ class AreaEffectsWindow extends rememberWindowPosition(
 
 	get title() {
 		return Manager.localize("areaEffects.title");
+	}
+
+	async close(options) {
+		this._draft = this._newPersistentDraft();
+		this._instantDraft = this._newInstantDraft();
+		this._placeSeq = 0;
+		return super.close(options);
 	}
 
 	/* -------------------------------------------- */
@@ -1375,6 +1653,8 @@ class AreaEffectsWindow extends rememberWindowPosition(
 				private: this._draft.private,
 				gmOnly: this._draft.gmOnly,
 				terrain: this._draft.terrain,
+				terrainStride: !!this._draft.terrainStride,
+				terrainFly: !!this._draft.terrainFly,
 				effects: this._draft.effects.map((uuid) => ({ uuid, name: AreaEffectsTool._displayName(uuid) }))
 			},
 			instantDraft: {
@@ -1383,6 +1663,7 @@ class AreaEffectsWindow extends rememberWindowPosition(
 				targetFilter: this._instantDraft.targetFilter,
 				includeSelf: this._instantDraft.includeSelf,
 				includeNeutral: this._instantDraft.includeNeutral,
+				closeAfterPlacing: !!this._instantDraft.closeAfterPlacing,
 				effects: this._instantDraft.effects.map((uuid) => ({ uuid, name: AreaEffectsTool._displayName(uuid) }))
 			},
 			areas: AreaEffectsTool._sceneAreas(),
@@ -1433,6 +1714,25 @@ class AreaEffectsWindow extends rememberWindowPosition(
 		});
 		form.querySelector("select[name='terrain']")?.addEventListener("change", (event) => {
 			this._draft.terrain = event.currentTarget.value ?? "";
+			// If both flags are off, auto-reset to None per spec (already none if set to diff/greater).
+			if (this._draft.terrain && !this._draft.terrainStride && !this._draft.terrainFly) {
+				this._draft.terrain = "";
+				this.render();
+			}
+		});
+		form.querySelector("input[name='terrainStride']")?.addEventListener("change", (event) => {
+			this._draft.terrainStride = !!event.currentTarget.checked;
+			if (!this._draft.terrainStride && !this._draft.terrainFly) {
+				this._draft.terrain = "";
+				this.render();
+			}
+		});
+		form.querySelector("input[name='terrainFly']")?.addEventListener("change", (event) => {
+			this._draft.terrainFly = !!event.currentTarget.checked;
+			if (!this._draft.terrainStride && !this._draft.terrainFly) {
+				this._draft.terrain = "";
+				this.render();
+			}
 		});
 		form.querySelector("input[name='private']")?.addEventListener("change", (event) => {
 			this._draft.private = !!event.currentTarget.checked;
@@ -1476,6 +1776,9 @@ class AreaEffectsWindow extends rememberWindowPosition(
 		element.querySelector("input[name='instant-neutral']")?.addEventListener("change", (event) => {
 			this._instantDraft.includeNeutral = !!event.currentTarget.checked;
 		});
+		element.querySelector("input[name='instant-close']")?.addEventListener("change", (event) => {
+			this._instantDraft.closeAfterPlacing = !!event.currentTarget.checked;
+		});
 	}
 
 	async _onAreaMode(id, mode) {
@@ -1505,6 +1808,8 @@ class AreaEffectsWindow extends rememberWindowPosition(
 			isPrivate: this._draft.private,
 			gmOnly: this._draft.gmOnly,
 			terrain: this._draft.terrain ?? "",
+			terrainStride: !!this._draft.terrainStride,
+			terrainFly: !!this._draft.terrainFly,
 			pf2eFlags: this._draft._pf2eFlags ?? null
 		});
 		if (seq !== null && seq !== this._placeSeq) return null; // superseded by a newer Place
@@ -1521,8 +1826,19 @@ class AreaEffectsWindow extends rememberWindowPosition(
 			ui.notifications.error(Manager.localize("areaEffects.notifyPlaceFail"));
 			return null;
 		}
-		// Reset every field back to its default after a successful placement.
+		// Keep shape/size/duration/terrain/flags for quick repeats; reset name/effects/mode/private.
+		const keep = {
+			kind: this._draft.kind,
+			size: this._draft.size,
+			duration: this._draft.duration,
+			durationMode: this._draft.durationMode,
+			terrain: this._draft.terrain ?? "",
+			terrainStride: !!this._draft.terrainStride,
+			terrainFly: !!this._draft.terrainFly
+		};
 		this._draft = this._newPersistentDraft();
+		Object.assign(this._draft, keep);
+		this._draft._pf2eFlags = null;
 		this.render();
 		return result;
 	}
@@ -1566,6 +1882,10 @@ class AreaEffectsWindow extends rememberWindowPosition(
 			pf2eFlags: this._instantDraft._pf2eFlags ?? null
 		});
 		if (seq !== null && seq !== this._placeSeq) return null; // superseded by a newer Place
+		if (result?.cancelled) {
+			this._instantDraft._pf2eFlags = null;
+			return result; // user cancelled the drawing — silent, keep window open
+		}
 		if (result === false) {
 			ui.notifications.error(Manager.localize("areaEffects.notifyPlaceFail"));
 			return false;
@@ -1576,8 +1896,22 @@ class AreaEffectsWindow extends rememberWindowPosition(
 		// non-GMs; GM computed them directly).
 		const tokenIds = result?.tokenIds ?? [];
 		if (tokenIds.length) canvas.tokens.setTargets(tokenIds);
-		// Reset every field back to its default after a successful placement.
+		if (this._instantDraft.closeAfterPlacing) {
+			this.close();
+			return result;
+		}
+		// Keep shape/size/targeting for quick repeats; only effects reset.
+		const keepInstant = {
+			kind: this._instantDraft.kind,
+			size: this._instantDraft.size,
+			targetFilter: this._instantDraft.targetFilter,
+			includeSelf: this._instantDraft.includeSelf,
+			includeNeutral: this._instantDraft.includeNeutral,
+			closeAfterPlacing: !!this._instantDraft.closeAfterPlacing
+		};
 		this._instantDraft = this._newInstantDraft();
+		Object.assign(this._instantDraft, keepInstant);
+		this._instantDraft._pf2eFlags = null;
 		this.render();
 		return result;
 	}

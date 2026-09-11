@@ -12,6 +12,7 @@ const LINKS = {
 	minor: `<p>@UUID[Compendium.pf2e-vibemodulerp.calm-effects.Item.QalmMinor0000000]{Spell Effect: Calm (Minor)}</p>`,
 	normal: `<p>@UUID[Compendium.pf2e.spell-effects.Item.Qr5rgoZvI4KmFY0N]{Spell Effect: Calm}</p>`,
 	absolute: `<p>@UUID[Compendium.pf2e-vibemodulerp.calm-effects.Item.QalmAbsol0000000]{Spell Effect: Calm (Absolute)}</p>`,
+	vibes: `<p>@UUID[Compendium.pf2e-vibemodulerp.calm-effects.Item.QalmVibes0000000]{Spell Effect: Calm (Vibes)}</p>`,
 };
 
 export class CalmEffectsTool {
@@ -59,10 +60,34 @@ export class CalmEffectsTool {
 		return description.replace(match[0], () => `${match[0]}\n${linkHtml}`);
 	}
 
+	/** Insert the Vibes link after the main description and before the `<hr>` divider
+	 *  (AGENTS.md default: description → link → line → Heightened/saves). When a
+	 *  Heightened block exists the divider before it is used; otherwise the first
+	 *  `<hr>` in the document is used (Calm has no Heightened, intro → hr → saves). */
+	static _insertVibesLink(description) {
+		const heightened = description.match(/<p><strong>Heightened[^<]*<\/strong>/);
+		if (heightened) {
+			const divider = description.slice(0, heightened.index).match(/<hr\s*\/?>/gi)?.pop();
+			if (divider !== undefined) {
+				const dividerIndex = description.lastIndexOf(divider, heightened.index);
+				return `${description.slice(0, dividerIndex)}\n${LINKS.vibes}\n${description.slice(dividerIndex)}`;
+			}
+			return `${description.slice(0, heightened.index)}\n${LINKS.vibes}\n${description.slice(heightened.index)}`;
+		}
+		const hrMatch = description.match(/<hr\s*\/?>/i);
+		if (hrMatch) {
+			const idx = hrMatch.index ?? description.search(/<hr\s*\/?>/i);
+			return `${description.slice(0, idx)}\n${LINKS.vibes}\n${description.slice(idx)}`;
+		}
+		return `${description}\n${LINKS.vibes}`;
+	}
+
 	/** Apply the full link layout: Minor below Success, the original below Failure,
-	 *  Absolute below Critical Failure. Returns the input unchanged when nothing applies. */
+	 *  Absolute below Critical Failure, and Vibes before the <hr>/Heightened block.
+	 *  Returns the input unchanged when nothing applies. */
 	static _transformDescription(description) {
 		let next = this._stripExistingLinks(description);
+		next = this._insertVibesLink(next);
 		next = this._insertAfterLabel(next, "Success", LINKS.minor);
 		next = this._insertAfterLabel(next, "Failure", LINKS.normal);
 		next = this._insertAfterLabel(next, "Critical Failure", LINKS.absolute);

@@ -64,6 +64,7 @@
       "includeNeutral": "Include Neutral",
       "placeInstant": "Place Instant AoE",
       "instantHint": "Places a one-shot area: every matching token inside is auto-targeted and receives all listed effects immediately, then the area is removed.",
+      "closeAfterPlacing": "Close window after placing area",
       "instantDefaultName": "Instant AoE",
       "behaviorLabel": "Area Effects",
       "behaviorHint": "Applies the configured spell effects to tokens inside this area and removes them when they leave (depending on the chosen mode).",
@@ -99,7 +100,10 @@
       "terrainNone": "None",
       "terrainDifficult": "Difficult",
       "terrainGreater": "Greater difficult",
-      "terrainHint": "Makes the area difficult terrain (each square costs 10 ft of movement on the ruler) or greater difficult (15 ft). Flying creatures are unaffected.",
+      "terrainApplies": "Applies to",
+      "terrainStride": "Stride",
+      "terrainFly": "Fly",
+      "terrainHint": "Makes the area difficult terrain (each square costs 10 ft, 15 ft if greater). Check Stride for ground movement and Fly for flight; Leap movement ignores terrain jumped over.",
       "unlimited": "Unlimited",
       "durationText": "{rounds} rounds ({mode})",
       "expired": "The \"{name}\" area expired (its duration ran out).",
@@ -158,6 +162,7 @@
       "triggerTurnStart": "Turn start",
       "triggerTurnEnd": "Turn end",
       "triggerDamage": "On damage",
+      "triggerOnApplied": "On applied",
       "sourceEffect": "Source effect (the item the actor must have)",
       "noSource": "No source effect selected",
       "pick": "Pick an effect",
@@ -166,6 +171,9 @@
       "saveFortitude": "Fortitude",
       "saveWill": "Will",
       "dc": "DC",
+      "casterDC": "Caster's DC",
+      "casterDCShort": "Caster DC",
+      "noCasterDC": "Effect Automator: Caster's DC not found — the effect has no origin caster, so the save was not rolled.",
       "removeOnTrigger": "Remove on trigger",
       "outcomesLabel": "Outcomes",
       "noneOutcome": "Nothing",
@@ -222,7 +230,7 @@
     },
     "dyingAutomation": {
       "notify": {
-        "noGm": "PF2e VibeModuleRP: no GM is connected, so Dying could not be automated for {name}. Add the condition manually."
+        "noGm": "PF2e VibeModuleRP: no GM is connected, so the Dying/Dead condition could not be automated for {name}. Add it manually."
       }
     },
     "hide-cursor": {
@@ -249,7 +257,7 @@
         "noGm": "No GM connected — could not apply condition to {name}."
       }
     },
-    "settings": {
+      "settings": {
       "categories": {
         "template-effects": "Template Effects settings",
         "spell-effects": "New Spell Effects",
@@ -273,7 +281,8 @@
         "flanking-offguard": "Flanking settings",
         "monk-flurry": "Monk Flurry settings",
         "fixes": "Fixes",
-        "instant-hidden-rolls": "Dice So Nice Tweaks"
+        "instant-hidden-rolls": "Dice So Nice Tweaks",
+        "calendaria-combat-clock": "Calendaria changes"
       },
       "frightened-decay": {
         "enabled": {
@@ -285,6 +294,10 @@
         "enabled": {
           "name": "Enable Dying & Wounded Automation",
           "hint": "Player characters only. When a PC's HP drops from above 0 to exactly 0 from damage, they gain Dying 1 (Dying 2 if the dropping blow was a critical hit) plus their current Wounded value. When HP is healed back above 0, any Dying still present is removed (manual stabilization to Dying 0 is left alone), and every time the Dying condition is lost, Wounded 1 is gained or increased by 1. Damage taken while already dying and recovery checks stay manual. If the change was caused by a user who doesn't own the target (another player's heal or AoE), a connected GM applies it over the module socket."
+        },
+        "automateDeath": {
+          "name": "Automate Death at Max Dying",
+          "hint": "When a PC at 0 HP reaches their maximum Dying value (4 by default, reduced by Doomed, raised by effects that increase the max), automatically apply the Dead status effect (the big red X overlay on the token). Disable this to keep death manual: the PC simply stays at max Dying and no Dead is ever applied automatically."
         }
       },
       "shattering-gem": {
@@ -339,6 +352,10 @@
         "showClear": {
           "name": "Show Clear Recorded Rolls button",
           "hint": "Displays a 'Clear All Records' button at the bottom of the Roll Counter window (GM only, with a confirmation dialog). Off by default so records can't be wiped by accident."
+        },
+        "pruneOldSessions": {
+          "name": "Auto-prune Old Sessions (Keep Today + 10)",
+          "hint": "When on (default), the Roll Counter keeps only today plus the 10 most recent past session-days (11 keys total in the dropdown) and deletes older entries on world load. When off, nothing is ever deleted automatically."
         },
         "state": {
           "name": "Recorded rolls",
@@ -485,6 +502,32 @@
           "enabled": {
             "name": "Enable Monk Flurry Automation",
             "hint": "Adds the Flurry of Blows macro (Ctrl+Alt+F or Feature Hub) for monks: rolls two Wolf Jaws/Fist Strikes with MAP, combines damage, rolls the Stunning Blows Fort save with incapacitation, and does Wolf Stance trip attempts when flanking (90-degree house rule). Flourish: once per turn."
+          }
+        },
+        "calendaria-combat-clock": {
+          "enabled": {
+            "name": "Enable Calendaria Combat Clock Fixes",
+            "hint": "Patches Calendaria's real-time clock while Calendaria is active. Adds a tri-state combat behaviour (pause / real-time / per-round) plus an option to show seconds on the HUD. Per-round mode pauses the wall-clock during combat and instead advances the world time by the calendar's secondsPerRound (normally 6 s) each time the combat round increments — once per full round, not per turn. Requires Calendaria."
+          },
+          "mode": {
+            "name": "Combat Clock Behaviour",
+            "hint": "How Calendaria's clock behaves during combat. Pause = stop completely (no time passes in combat). Real-time = classic Calendaria wall-clock keeps ticking even on your turn. Per-round = freeze the wall-clock and advance exactly the calendar's secondsPerRound (e.g. 6 s) after each full combat round completes. Transfer between modes applies immediately (GM only); players see the new mode after their next reload."
+          },
+          "hudSeconds": {
+            "name": "Show Seconds on HUD",
+            "hint": "When on, forces Calendaria's HUD time to HH:mm:ss (time24Sec). When off, restores whatever the world had before. Useful to verify that 6 s bumps actually land. Only the GM can write the Calendaria display format; players see it after the GM toggles it."
+          }
+        },
+        "timed-regeneration": {
+          "enabled": {
+            "name": "Enable Timed Regeneration (Aeon Stone etc.)",
+            "hint": "While active, creatures with Effect: Aeon Stone Resonance (Pearly White Spindle) regain 1 HP every 60 seconds of world time (10 rounds), even at 0 HP, up to their max — no chat spam. Time comes from Calendaria or any worldTime advance. Extendable: other effects can register different intervals (1h, 1d) via TimedRegenerationTool.register() or the pf2e-vibemodulerp.timedTick hook."
+          }
+        },
+        "trait-propagation": {
+          "enabled": {
+            "name": "Enable Trait Propagation for Effects",
+            "hint": "When an effect, condition or affliction is added to an actor, copies missing traits (mental, emotion, auditory, etc., plus rarity/traditions) from its origin spell or feat into the effect before the system's immunity checks run. This makes mindless creatures correctly immune to mental effects and fixes other trait-based immunities where the effect compendium entry is missing traits."
           }
         }
     }

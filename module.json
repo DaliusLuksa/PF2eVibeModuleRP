@@ -1,7 +1,7 @@
 {
   "id": "pf2e-vibemodulerp",
   "title": "PF2e VibeModuleRP",
-  "version": "1.28.0",
+  "version": "1.29.5",
   "compatibility": {
     "minimum": "12",
     "verified": "14.365"

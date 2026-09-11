@@ -48,14 +48,21 @@
             <p class="ae-hint">{{@root.i18n 'trackModeHint'}}</p>
         </div>
 
-        <div class="ae-field">
-            <label for="ae-terrain">{{@root.i18n 'terrainLabel'}}</label>
-            <select id="ae-terrain" name="terrain">
-                <option value="" {{#unless draft.terrain}}selected{{/unless}}>{{@root.i18n 'terrainNone'}}</option>
-                <option value="difficult" {{#if (eq draft.terrain 'difficult')}}selected{{/if}}>{{@root.i18n 'terrainDifficult'}}</option>
-                <option value="greater" {{#if (eq draft.terrain 'greater')}}selected{{/if}}>{{@root.i18n 'terrainGreater'}}</option>
-            </select>
-            <p class="ae-hint">{{@root.i18n 'terrainHint'}}</p>
+        <div class="ae-row ae-terrain-row">
+            <div class="ae-field">
+                <label for="ae-terrain">{{@root.i18n 'terrainLabel'}}</label>
+                <select id="ae-terrain" name="terrain">
+                    <option value="" {{#unless draft.terrain}}selected{{/unless}}>{{@root.i18n 'terrainNone'}}</option>
+                    <option value="difficult" {{#if (eq draft.terrain 'difficult')}}selected{{/if}}>{{@root.i18n 'terrainDifficult'}}</option>
+                    <option value="greater" {{#if (eq draft.terrain 'greater')}}selected{{/if}}>{{@root.i18n 'terrainGreater'}}</option>
+                </select>
+                <p class="ae-hint">{{@root.i18n 'terrainHint'}}</p>
+            </div>
+            <div class="ae-field ae-terrain-flags">
+                <label>{{@root.i18n 'terrainApplies'}}</label>
+                <label class="ae-rad"><input type="checkbox" name="terrainStride" {{#if draft.terrainStride}}checked{{/if}}> {{@root.i18n 'terrainStride'}}</label>
+                <label class="ae-rad"><input type="checkbox" name="terrainFly" {{#if draft.terrainFly}}checked{{/if}}> {{@root.i18n 'terrainFly'}}</label>
+            </div>
         </div>
 
         <div class="ae-row">
@@ -188,6 +195,7 @@
                     {{/each}}
                 </ul>
                 <button type="button" class="ae-add" data-action="pickInstantEffect"><i class="fa-solid fa-plus"></i> {{@root.i18n 'addEffect'}}</button>
+                <label class="ae-rad"><input type="checkbox" name="instant-close" {{#if instantDraft.closeAfterPlacing}}checked{{/if}}> {{@root.i18n 'closeAfterPlacing'}}</label>
             </div>
 
             <button type="button" class="ae-place" data-action="placeInstant"><i class="fa-solid fa-bolt"></i> {{@root.i18n 'placeInstant'}}</button>

@@ -43,7 +43,7 @@ export const Manager = new (class {
 				requiresReload: true
 			});
 			for (const setting of tool.settings ?? []) {
-				game.settings.register(this.id, `${tool.id}.${setting.key}`, {
+				const cfg = {
 					name: this.localize(`settings.${tool.id}.${setting.key}.name`),
 					hint: this.localize(`settings.${tool.id}.${setting.key}.hint`),
 					scope: setting.scope ?? "world",
@@ -52,7 +52,10 @@ export const Manager = new (class {
 					default: setting.default,
 					onChange: setting.onChange,
 					requiresReload: setting.requiresReload
-				});
+				};
+				if (setting.choices) cfg.choices = setting.choices;
+				if (setting.range) cfg.range = setting.range;
+				game.settings.register(this.id, `${tool.id}.${setting.key}`, cfg);
 			}
 		}
 		Hooks.on("renderSettingsConfig", this._renderSettingsCategories.bind(this));
