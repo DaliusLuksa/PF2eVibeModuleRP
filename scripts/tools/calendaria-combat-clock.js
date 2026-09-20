@@ -1,5 +1,8 @@
 import { Manager } from "../core/manager.js";
 
+const SOCKET_EVENT = `module.${Manager.id}`;
+const SOCKET_ACTION_CLOCK_REQUEST = "calendariaClockRequest";
+
 /**
  * Calendaria Combat Clock — tri-state combat time for the real-time clock.
  *
@@ -57,6 +60,19 @@ export class CalendariaCombatClockTool {
 		Hooks.on("combatTurn", this._onCombatTurn.bind(this));
 		Hooks.on("updateCombat", this._onUpdateCombat.bind(this));
 		Hooks.on("deleteCombat", this._onDeleteCombat.bind(this));
+
+		// Clock-state resync: clients only learn running/stopped from a single
+		// fire-and-forget broadcast, so late joiners / reloaders freeze. Repair:
+		try { game.socket?.on(SOCKET_EVENT, this._onSocketMessage.bind(this)); } catch {}
+		Hooks.on("userConnected", this._onUserConnected.bind(this));
+		if (this._isPrimaryGM()) {
+			// Catch clients that connected while the world was loading.
+			setTimeout(() => this._rebroadcastClockState(), 6000);
+		} else {
+			// Ask the Primary GM for the current state (covers reloads where
+			// userConnected already fired before we were listening).
+			setTimeout(() => this._requestClockState(), 4000);
+		}
 	}
 
 	static get _mode() {
@@ -71,6 +87,7 @@ export class CalendariaCombatClockTool {
 
 	static _onModeChanged() {
 		this._syncCalendariaFlag();
+		if (this._isPrimaryGM()) setTimeout(() => this._rebroadcastClockState(), 1000);
 	}
 
 	static _syncCalendariaFlag() {
@@ -166,5 +183,82 @@ export class CalendariaCombatClockTool {
 
 	static _onDeleteCombat(combat) {
 		this._lastRound = null;
+		// Re-announce the post-combat clock truth (running or stopped) so any
+		// client that drifted matches the GM again after every fight.
+		if (this._isPrimaryGM()) setTimeout(() => this._rebroadcastClockState(), 1500);
+	}
+
+	/** Mirror Calendaria's Primary-GM election (override, else lowest active GM id). */
+	static _isPrimaryGM() {
+		try {
+			if (!game.user?.isGM) return false;
+			const override = game.settings.get("calendaria", "primaryGM");
+			if (override) return override === game.user.id;
+			const activeGMs = game.users.filter(u => u.isGM && u.active);
+			if (!activeGMs.length) return false;
+			return activeGMs.sort((a, b) => a.id.localeCompare(b.id))[0].id === game.user.id;
+		} catch {
+			return !!game.user?.isActiveGM;
+		}
+	}
+
+	static _timeClock() {
+		try { return globalThis.CALENDARIA?.managers?.TimeClock ?? null; }
+		catch { return null; }
+	}
+
+	/**
+	 * Re-emit Calendaria's native clockUpdate on its own socket channel so its
+	 * own handler picks it up (same message start()/stop() sends; no dup logic).
+	 * Flushes the GM's accumulated seconds FIRST (a plain game.time.advance,
+	 * like the 60s commit and the 6s round advances): that commit is synced to
+	 * every client via updateWorldTime and zeroes both sides' accumulators, so
+	 * the broadcast starts everyone from the same value — not just the same
+	 * running flag with up to ~60s of offset.
+	 */
+	static async _rebroadcastClockState() {
+		if (!this._enabled) return;
+		if (!game.modules.get("calendaria")?.active) return;
+		if (!this._isPrimaryGM()) return;
+		const tc = this._timeClock();
+		if (!tc) return;
+		try {
+			const running = !!tc.running;
+			if (running) {
+				const acc = (tc.predictedWorldTime ?? game.time.worldTime) - game.time.worldTime;
+				if (acc > 0.5) {
+					try { await game.time.advance(acc); } catch (e) {
+						console.warn(`${Manager.id} | clock resync flush failed`, e);
+					}
+				}
+			}
+			const ratio = typeof tc.increment === "number" ? tc.increment : 1;
+			game.socket.emit("module.calendaria", { type: "clockUpdate", data: { running, ratio } });
+		} catch (e) {
+			console.warn(`${Manager.id} | clock resync broadcast failed`, e);
+		}
+	}
+
+	static _requestClockState() {
+		if (!this._enabled) return;
+		if (!game.modules.get("calendaria")?.active) return;
+		if (this._isPrimaryGM()) return;
+		try {
+			game.socket.emit(SOCKET_EVENT, { action: SOCKET_ACTION_CLOCK_REQUEST });
+		} catch {}
+	}
+
+	static _onUserConnected(user, connected) {
+		if (!connected) return;
+		if (!this._enabled) return;
+		if (!this._isPrimaryGM()) return;
+		// Give the joiner's client time to register its socket listener.
+		setTimeout(() => this._rebroadcastClockState(), 2500);
+	}
+
+	static _onSocketMessage(data, senderId) {
+		if (!data || data.action !== SOCKET_ACTION_CLOCK_REQUEST) return;
+		if (!this._isPrimaryGM()) return;
+		setTimeout(() => this._rebroadcastClockState(), 1000);
 	}
 }

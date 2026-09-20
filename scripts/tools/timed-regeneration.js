@@ -47,6 +47,13 @@ export class TimedRegenerationTool {
 		// Per-second precise tick while clock is running (gives exact equip-second alignment)
 		Hooks.on("calendaria.visualTick", this._onVisualTick.bind(this));
 		Hooks.on("calendaria.clockUpdate", this._onVisualTick.bind(this)); // fallback name
+		if (game.user.isActiveGM) {
+			// Anchors are persisted as *predicted* time (up to ~60s of uncommitted
+			// seconds die with a reload), so after load an anchor can sit ahead of
+			// committed worldTime and the first skip under-heals. Re-phase them now.
+			this._clampAnchorsToWorldTime().catch(e =>
+				console.warn(`${Manager.id} | timed-regen anchor clamp failed`, e));
+		}
 		try {
 			const api = game.modules.get(Manager.id)?.api ?? {};
 			api.timedRegeneration = {
@@ -134,7 +141,31 @@ export class TimedRegenerationTool {
 		}
 	}
 
+	/** Per actor+effect promise chain: visualTick and updateWorldTime are
+	 * concurrent async drivers (core fires updateWorldTime via Hooks.callAll,
+	 * which never awaits async listeners, so back-to-back commits overlap).
+	 * Runs are serialized and each re-reads the anchor fresh — no double-heal,
+	 * no dropped windows, exact tick counts. */
+	static _queues = new Map();
+
 	static async _processActorInterval(actor, slug, cfg, time) {
+		const interval = cfg.interval;
+		if (!interval || interval <= 0) return;
+
+		const key = `${actor?.uuid ?? actor?.id}|${slug}`;
+		const prev = (this._queues.get(key) ?? Promise.resolve()).catch(() => {});
+		const cur = prev.then(() => this._processActorIntervalInner(actor, slug, cfg, time));
+		this._queues.set(key, cur);
+		try {
+			await cur;
+		} catch (e) {
+			console.warn(`${Manager.id} | timed tick failed for ${slug} on ${actor?.name}`, e);
+		} finally {
+			if (this._queues.get(key) === cur) this._queues.delete(key);
+		}
+	}
+
+	static async _processActorIntervalInner(actor, slug, cfg, time) {
 		const interval = cfg.interval;
 		if (!interval || interval <= 0) return;
 
@@ -214,8 +245,34 @@ export class TimedRegenerationTool {
 		}
 	}
 
-	static _allActors() {
-		const seen = new Set();
+	/** Move any persisted anchor that lies ahead of committed worldTime back to
+	 * the same phase at-or-before worldTime (same math as the rewind branch). */
+	static async _clampAnchorsToWorldTime() {
+		if (!this._enabled) return;
+		const worldTime = game.time?.worldTime;
+		if (typeof worldTime !== "number") return;
+		for (const actor of this._allActors()) {
+			if (!actor) continue;
+			let flags;
+			try { flags = actor.getFlag(Manager.id, this.FLAG_KEY) ?? {}; }
+			catch { continue; }
+			let changed = false;
+			const next = { ...flags };
+			for (const [slug, cfg] of Object.entries(this.REGISTRY)) {
+				const last = next[slug];
+				if (typeof last !== "number" || last <= worldTime) continue;
+				const interval = cfg?.interval ?? 60;
+				next[slug] = last + Math.floor((worldTime - last) / interval) * interval;
+				changed = true;
+			}
+			if (changed) {
+				try { await actor.setFlag(Manager.id, this.FLAG_KEY, next); }
+				catch (e) { console.warn(`${Manager.id} | anchor clamp failed on ${actor.name}`, e); }
+			}
+		}
+	}
+
+	static _allActors() {		const seen = new Set();
 		const out = [];
 		for (const scene of game.scenes ?? []) {
 			for (const token of scene.tokens ?? []) {
