@@ -5,6 +5,7 @@ import { ActionTrackerTool } from "./action-tracker.js";
 const SOCKET_EVENT = `module.${Manager.id}`;
 const SOCKET_ACTION_MONK_FLURRY = "monkFlurryApply";
 const SOCKET_ACTION_MONK_FLURRY_RESULT = "monkFlurryApplyResult";
+const SOCKET_ACTION_MONK_FLURRY_CRITSPEC = "monkFlurryCritSpec";
 const GM_RESPONSE_TIMEOUT_MS = 20000;
 
 const CONDITION_STUNNED = "Compendium.pf2e.conditionitems.Item.dfCMdR4wnpbYNTix";
@@ -18,6 +19,8 @@ export class MonkFlurryTool {
 
 	static _pendingGmRequests = new Map();
 	static _flurryTracker = new Map(); // actorId -> { combatId, round, turn }
+	/** Crit-spec Slowed expiries: [{ combatId, attackerId, targetUuid, tokenUuid, round }] (GM-side). */
+	static _critSpecTracker = [];
 
 	static init() {
 		game.keybindings.register(Manager.id, "monkFlurry", {
@@ -40,6 +43,7 @@ export class MonkFlurryTool {
 	static ready() {
 		Hooks.on("combatTurnChange", this._onCombatTurnChange.bind(this));
 		Hooks.on("deleteCombat", this._onDeleteCombat.bind(this));
+		Hooks.on("pf2e.endTurn", this._onEndTurn.bind(this));
 		game.socket.on(SOCKET_EVENT, this._onSocketMessage.bind(this));
 		Hooks.on("renderChatMessageHTML", this._onRenderChatMessage.bind(this));
 		console.debug(`${Manager.id} | monk-flurry ready`);
@@ -60,6 +64,90 @@ export class MonkFlurryTool {
 
 	static _onDeleteCombat(combat) {
 		for (const [k, v] of this._flurryTracker.entries()) if (v.combatId === combat.id) this._flurryTracker.delete(k);
+		this._critSpecTracker = this._critSpecTracker.filter((r) => r.combatId !== combat?.id);
+	}
+
+	/** GM-side record for a crit-spec Slowed (deduped per combat/attacker/token). */
+	static _recordCritSpec(rec) {
+		try {
+			if (!rec?.combatId || !rec?.attackerId || (!rec?.tokenUuid && !rec?.targetUuid)) return;
+			const key = (r) => r.tokenUuid ?? r.targetUuid;
+			const dup = this._critSpecTracker.some((r) => r.combatId === rec.combatId && r.attackerId === rec.attackerId && key(r) === (rec.tokenUuid ?? rec.targetUuid));
+			if (!dup) this._critSpecTracker.push({ combatId: rec.combatId, attackerId: rec.attackerId, targetUuid: rec.targetUuid ?? null, tokenUuid: rec.tokenUuid ?? null, round: Number(rec.round ?? 0) || 0 });
+			} catch {}
+	}
+
+	/**
+	 * Called after applying crit-spec Slowed: GM records directly, others send
+	 * it to a GM. Records the combat TOKEN uuid: the apply touched
+	 * `token.actor` (for unlinked tokens the condition lives in the token
+	 * delta, not on the base actor), so expiry must resolve the same document.
+	 */
+	static _trackCritSpec(targetActor, attacker, tokenDoc = null) {
+		try {
+			const combat = game.combat;
+			if (!combat?.id) {
+				return; // no combat running: manual removal
+			}
+			const rec = { combatId: combat.id, attackerId: attacker.id, targetUuid: targetActor.uuid, tokenUuid: tokenDoc?.uuid ?? null, round: combat.round };
+			if (game.user.isGM) this._recordCritSpec(rec);
+			else {
+				const gm = game.users.find((u) => u.isGM && u.active);
+				if (gm) game.socket.emit(SOCKET_EVENT, { action: SOCKET_ACTION_MONK_FLURRY_CRITSPEC, ...rec }, { recipients: [gm.id] });
+			}
+		} catch (e) { console.warn(`${Manager.id} | crit-spec track failed`, e); }
+	}
+
+	/**
+	 * GM-only: at the end of the attacker's next turn (a later round than the
+	 * application), step the tracked Slowed back down (delete at value 1).
+	 * Item-direct, never via the conditions manager: Stunned declares
+	 * `overrides: ["slowed"]`, hiding Slowed from hasCondition/HUD while the
+	 * item itself persists. A single step is also graceful if another effect
+	 * raised the value meanwhile.
+	 */
+	static async _onEndTurn(combatant, encounter, userId) {
+		if (!game.user.isGM) return;
+		try {
+			const combatId = encounter?.id ?? combatant?.combat?.id ?? game.combat?.id ?? null;
+			const attackerId = combatant?.actor?.id ?? null;
+			const round = Number(encounter?.round ?? game.combat?.round ?? 0) || 0;
+			if (!combatId || !attackerId) return;
+			// Leak guard: drop records for combats that no longer exist. Never
+			// wipe when the collection API is unavailable (keep records instead).
+			try {
+				const combats = game.combats;
+				if (combats?.has) this._critSpecTracker = this._critSpecTracker.filter((r) => { try { return combats.has(r.combatId); } catch { return true; } });
+			} catch {}
+			const due = this._critSpecTracker.filter((r) => r.combatId === combatId && r.attackerId === attackerId && round > r.round);
+			if (!due.length) return;
+			for (const rec of due) {
+				try {
+					// Resolve via the combat token first: the apply touched
+					// token.actor (token delta for unlinked tokens). The base
+					// actor uuid is only a fallback for linked/legacy records.
+					let target = null;
+					if (rec.tokenUuid) {
+						const tok = await foundry.utils.fromUuid(rec.tokenUuid).catch(() => null) ?? null;
+						target = tok?.actor ?? null;
+					}
+					if (!target && rec.targetUuid) {
+						target = await foundry.utils.fromUuid(rec.targetUuid).catch(() => null) ?? null;
+					}
+					// Item-direct (never hasCondition/decreaseCondition): while
+					// Stunned is present the system marks Slowed overridden
+					// (condition data `overrides: ["slowed"]`) and hides it from
+					// the conditions manager, but the item is still there.
+					const slowedItem = target?.items?.find?.((i) => i?.type === "condition" && ((i.slug ?? i.system?.slug) === "slowed")) ?? null;
+					if (slowedItem) {
+						const cur = Number(slowedItem.system?.value?.value ?? 1) || 1;
+						if (cur <= 1) await target.deleteEmbeddedDocuments("Item", [slowedItem.id]);
+						else await slowedItem.update({ "system.value.value": cur - 1 });
+					}
+				} catch (e) { console.warn(`${Manager.id} | crit-spec expiry failed`, e); }
+			}
+			this._critSpecTracker = this._critSpecTracker.filter((r) => !due.includes(r));
+		} catch (e) { console.warn(`${Manager.id} | crit-spec endTurn failed`, e); }
 	}
 
 	static _hasUsedFlurry(actor) {
@@ -79,6 +167,11 @@ export class MonkFlurryTool {
 		try {
 			const root = html instanceof HTMLElement ? html : html?.[0] ?? html;
 			if (!root) return;
+			// Full-card highlight for the combined + trip crit damage cards (flagged at creation).
+			try {
+				if (message?.getFlag?.(Manager.id, "flurryCombined")) root.classList?.add("monk-flurry-combined");
+				if (message?.getFlag?.(Manager.id, "flurryTripCrit")) root.classList?.add("monk-flurry-trip-crit");
+			} catch {}
 			const btn = root.querySelector?.('[data-monk-flurry-apply]');
 			if (!btn) return;
 			btn.addEventListener('click', async (ev) => {
@@ -104,6 +197,9 @@ export class MonkFlurryTool {
 			if (data.action === SOCKET_ACTION_MONK_FLURRY) {
 				if (!game.user.isGM) return;
 				this._handleGmApply(data, userId).catch((e) => console.error(`${Manager.id} | monkFlurry GM failed`, e));
+			} else if (data.action === SOCKET_ACTION_MONK_FLURRY_CRITSPEC) {
+				if (!game.user.isGM) return;
+				this._recordCritSpec(data);
 			} else if (data.action === SOCKET_ACTION_MONK_FLURRY_RESULT) {
 				this._handleGmResult(data);
 			}
@@ -135,6 +231,10 @@ export class MonkFlurryTool {
 						await actor.increaseCondition("stunned", { value: op.value });
 					} else if (op.type === "prone") {
 						if (!actor.hasCondition?.("prone")) await actor.increaseCondition("prone");
+					} else if (op.type === "slowed") {
+						// Item-direct guard: hasCondition hides Slowed while Stunned overrides it.
+						const has = actor.items.some((i) => i?.type === "condition" && ((i.slug ?? i.system?.slug) === "slowed"));
+						if (!has) await actor.increaseCondition("slowed", { value: op.value ?? 1 });
 					}
 				}
 				applied = true;
@@ -162,6 +262,10 @@ export class MonkFlurryTool {
 						await targetActor.increaseCondition("stunned", { value: op.value });
 					} else if (op.type === "prone") {
 						if (!targetActor.hasCondition?.("prone")) await targetActor.increaseCondition("prone");
+					} else if (op.type === "slowed") {
+						// Item-direct guard: hasCondition hides Slowed while Stunned overrides it.
+						const has = targetActor.items.some((i) => i?.type === "condition" && ((i.slug ?? i.system?.slug) === "slowed"));
+						if (!has) await targetActor.increaseCondition("slowed", { value: op.value ?? 1 });
 					}
 				} catch (e) { console.warn(`${Manager.id} | apply condition failed`, e); }
 			}
@@ -212,28 +316,6 @@ export class MonkFlurryTool {
 			// Fallback: use system isFlanking if available
 			try { return attackerToken.object?.isFlanking?.(targetToken.object) ?? false; } catch { return false; }
 		}
-	}
-
-	static _getFlatCheckDC(targetActor) {
-		try {
-			if (targetActor.hasCondition?.("hidden") || targetActor.getCondition?.("hidden") || targetActor.conditions?.has?.("hidden")) return 11;
-			if (targetActor.hasCondition?.("concealed") || targetActor.getCondition?.("concealed") || targetActor.conditions?.has?.("concealed")) return 5;
-			for (const it of targetActor.items ?? []) {
-				const slug = (it.slug ?? it.system?.slug ?? "").toLowerCase();
-				if (slug === "hidden" || slug === "effect-hidden") return 11;
-				if (slug === "concealed" || slug === "effect-concealed") return 5;
-			}
-			const opts = targetActor.getRollOptions?.(["all"]) ?? [];
-			if (opts.includes("target:effect:concealed") || opts.includes("target:concealed") || opts.some(o => o.includes("concealed"))) return 5;
-			if (opts.includes("target:effect:hidden") || opts.includes("target:hidden") || opts.some(o => o.includes("hidden"))) return 11;
-		} catch (e) { console.warn(`${Manager.id} | flatCheck DC failed`, e); }
-		return null;
-	}
-
-	static async _rollFlatCheck(dc) {
-		const roll = await new Roll("1d20").evaluate();
-		const success = roll.total >= dc;
-		return { roll, total: roll.total, dc, success, degree: success ? "success" : "failure" };
 	}
 
 	static _getMessageElement(message) {
@@ -308,21 +390,81 @@ export class MonkFlurryTool {
 		return "failure";
 	}
 
+	/** Short consequence text for trip Athletics rolls (native notes cover the system path; manual Rolls get it in the flavor). */
+	static _tripOutcomeText(degree) {
+		if (degree === "criticalSuccess") return "Prone! + 1d6 bludgeoning";
+		if (degree === "success") return "Prone!";
+		if (degree === "criticalFailure") return "Crit fail — you fall prone";
+		return "No effect";
+	}
+
+	/**
+	 * Roll Trip critical-success damage (1d6 bludgeoning, system Trip text) and
+	 * post it as its own native damage card with Apply buttons. Separate from
+	 * the combined pool on purpose: resistances apply per damage source, so
+	 * merging would under-apply them. Returns the total (0 on failure).
+	 */
+	static async _rollTripCritDamage(attacker, attackerToken, targetActor, targetToken) {
+		try {
+			// Let the athletics dice settle first so animations don't overlap.
+			await this._breather();
+			let roll = null;
+			try {
+				const DamageRollCls = foundry.dice?.rolls?.DamageRoll ?? CONFIG?.Dice?.rolls?.find?.((c) => c.name === "DamageRoll") ?? null;
+				if (DamageRollCls) roll = await new DamageRollCls("{1d6[bludgeoning]}").evaluate();
+				else roll = await new Roll("1d6").evaluate();
+			} catch {
+				roll = await new Roll("1d6").evaluate();
+			}
+			const total = Number(roll?.total ?? 0) || 0;
+			const flavor = `<h4 class="action"><strong>Damage Roll: Trip (Critical Success)</strong> <span class="subtitle degree-of-success">(<span class="success">Critical Success</span>)</span></h4><div class="tags" data-tooltip-class="pf2e"><span class="tag" data-tooltip="PF2E.TraitDescriptionAttack" data-trait="attack">Attack</span></div><hr><div class="tags modifiers"><span class="tag tag_transparent" data-visibility="gm">${total} Bludgeoning</span><span class="tag tag_transparent" data-visibility="gm">Trip</span></div>`;
+			await ChatMessage.create({
+				speaker: ChatMessage.getSpeaker({ actor: attacker, token: attackerToken?.document ?? null }),
+				flavor,
+				content: `${total}`,
+				rolls: [roll],
+				flags: {
+					pf2e: {
+						context: {
+							type: "damage-roll",
+							sourceType: "attack",
+							actor: attacker.id,
+							token: attackerToken.id ?? null,
+							target: { actor: targetActor.id, token: targetToken.id },
+							domains: ["trip-damage", "damage"],
+							options: ["attack", "damage", "trip"],
+							outcome: "success",
+							notes: [],
+							secret: false,
+						},
+						origin: { actor: attacker.uuid, type: "weapon" },
+					},
+					[Manager.id]: { flurryTripCrit: true },
+				},
+			});
+			return total;
+		} catch (e) {
+			console.warn(`${Manager.id} | trip crit damage failed`, e);
+			return 0;
+		}
+	}
+
 	static async _rollCheck(actor, statSlug, dc, options = {}) {
 		// Try system statistic roll
 		try {
 			const stat = actor.getStatistic?.(statSlug);
 			if (stat?.check?.roll) {
-				// Build params that include dc and incapacitation trait handling
-				const rollOptions = options.extraRollOptions ?? [];
-				// pf2e's roll will handle Degree and create chat message
-				const result = await stat.check.roll({
-					dc: { value: dc },
-					extraRollOptions: rollOptions,
-					traits: options.traits ?? [],
-					createMessage: true,
-					skipDialog: true,
-				});
+			// Build params that include dc and incapacitation trait handling
+			const rollOptions = options.extraRollOptions ?? [];
+			// pf2e's roll will handle Degree and create chat message
+			const result = await stat.check.roll({
+				dc: { value: dc },
+				extraRollOptions: rollOptions,
+				traits: options.traits ?? [],
+				extraRollNotes: options.extraRollNotes ?? [],
+				createMessage: true,
+				skipDialog: true,
+			});
 				// result is a RolledCheck? Try to extract degree and total
 				// For saves, system returns CheckRoll with degreeOfSuccess
 				if (result) {
@@ -441,32 +583,6 @@ export class MonkFlurryTool {
 		}
 	}
 
-	static async _patchAttackWithFlat(message, flat, dc, targetActor) {
-		if (!message) { console.warn(`${Manager.id} | flat patch: no message for flat`, flat); return; }
-		if (!flat) { console.warn(`${Manager.id} | flat patch: no flat data for`, message.id); return; }
-		try {
-			const success = flat.success;
-			const label = dc === 11 ? "Hidden" : "Concealed";
-			// Mimic native flat-check result: number inside a colored box near the button (green success / red failure)
-			const flatHtml = `<div class="flat-check" style="margin-top:0.5em;display:flex;align-items:center;gap:0.6em;padding:0.4em 0.5em;border:1px solid var(--color-border-light-2);border-radius:6px;background:var(--color-bg-option,rgba(0,0,0,0.03));"><span style="font-weight:bold;">Flat Check vs ${label} (DC ${dc}):</span><span class="dice-total" style="display:inline-block;min-width:2.4em;text-align:center;padding:0.2em 0.45em;border-radius:4px;font-weight:bold;font-size:1.05em;background:${success ? "#2d8a4e" : "#9a2a2a"};color:white;border:1px solid ${success ? "#1f6b3a" : "#7a1f1f"};">${flat.total}</span><span class="${success ? "success" : "failure"}" style="font-weight:bold;color:${success ? "#2d8a4e" : "#9a2a2a"};">${success ? "Success" : "Failure - attack misses"}</span></div>`;
-			let content = message.content ?? "";
-			// Avoid double-patching
-			// If PF2e already rendered a flat-check button (when target was concealed/hidden), replace that button with the result box -" like native does when you click it
-			if (/Flat Check/i.test(content) && /<button[^>]*>/.test(content)) {
-				const replaced = content.replace(/<button[^>]*>[\s\S]*?Flat Check[\s\S]*?<\/button>/i, flatHtml);
-				if (replaced !== content) content = replaced;
-				else content = content + flatHtml;
-			} else {
-				content = content + flatHtml;
-			}
-			await message.update({ content });
-			// Also update system outcome flag so "Apply Damage" buttons disappear on failure (like system does)
-			if (!success) {
-				try { await message.update({ "flags.pf2e.context.outcome": "failure", "flags.pf2e.context.flatCheckResult": "failure" }); } catch {}
-			}
-		} catch (e) { console.warn(`${Manager.id} | flat patch failed`, e); }
-	}
-
 	static async _rollDamage(strike, isCritical) {
 		// Use native PF2e damage so the message has the standard damage card + Apply buttons.
 		// Macro must not show the damage modifier dialog even if the user has showDamageDialogs on.
@@ -493,42 +609,59 @@ export class MonkFlurryTool {
 		}
 	}
 
-	static async _waitForDice(expectedMessages = 1) {
+	static async _waitForMacroDice(beforeIds, timeoutMs = 4000) {
+		// Settle the 3D animations of messages created since `beforeIds` was
+		// captured, by tracking the real message IDs (bard-helper pattern:
+		// `game.dice3d.waitFor3DAnimationByMessageID`), NOT presumed counts.
+		// DSN resolves immediately for messages that aren't animating, and the
+		// overall cap means a missed animation can never stall the macro.
+		const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 		const dsn = game.modules.get("dice-so-nice")?.active && !!game.dice3d;
 		if (!dsn) {
-			await new Promise((r) => setTimeout(r, 450));
+			await settle(300);
 			return;
 		}
-		// DSN animates each Roll's dice; pf2e's ha.roll already awaits the 3D animation,
-		// but our summary should still not appear until the last dice have settled.
-		// Always wait for diceSoNiceRollComplete (or timeout) — don't rely on isVisible check
-		// which races the animation start.
-		let remaining = Math.max(1, Number(expectedMessages) || 1);
-		await new Promise((resolve) => {
-			let timeout = null;
-			const done = () => {
-				if (timeout) clearTimeout(timeout);
-				Hooks.off("diceSoNiceRollComplete", onComplete);
-				resolve();
-			};
-			const onComplete = () => {
-				remaining--;
-				if (remaining <= 0) done();
-			};
-			Hooks.on("diceSoNiceRollComplete", onComplete);
-			timeout = setTimeout(done, 6000);
-			// If no dice were actually shown (e.g. DSN hidden for this roll), the hook never fires — timeout above handles it
-		});
-		await new Promise((r) => setTimeout(r, 300));
+		let targets = [];
+		try {
+			targets = [...game.messages.values()].filter((m) => !beforeIds.has(m.id) && (m.rolls?.length ?? 0) > 0);
+		} catch {}
+		if (!targets.length) return;
+		try {
+			await Promise.race([
+				Promise.all(targets.map((m) => game.dice3d.waitFor3DAnimationByMessageID(m.id).catch(() => null))),
+				settle(timeoutMs)
+			]);
+		} catch {}
+		await settle(250);
 	}
 
-	static async _createCombinedDamageMessage(attacker, attackerToken, targetActor, targetToken, combinedTotal, flavorAttack, damageType = null, strike = null) {
-		// Build a native-looking PF2e damage card but with our provided total and correct damage type.
-		// damageType is resolved from the actual strike (piercing for Wolf Jaws, bludgeoning for Fist).
+	/** Small pause between macro phases so 3D animations don't stack onto one frame (peak smoothing, not a fix for one-time engine init). */
+	static _breather(ms = 250) {
+		return new Promise((r) => setTimeout(r, ms));
+	}
+
+	static async _createCombinedDamageMessage(attacker, attackerToken, targetActor, targetToken, combinedTotal, flavorAttack, damageType = null, strike = null, typeEntries = []) {
+		// Build a native-looking PF2e damage card but with our provided totals per damage type.
+		// typeEntries (merged from the original rolls' DamageRoll.instances) drives a
+		// multi-instance formula in the system's own shape (`{8[bludgeoning],4[fire]}`):
+		// weaknesses/immunities/resistances then apply per type through the normal buttons.
 		try {
+			const titleCase = (s) => { s = String(s ?? ""); return s.charAt(0).toUpperCase() + s.slice(1); };
 			const rawType = String(damageType ?? strike?.item?.system?.damage?.damageType ?? strike?.item?.system?.damage?.base?.damageType ?? "bludgeoning").toLowerCase();
-			const typeLabel = rawType.charAt(0).toUpperCase() + rawType.slice(1);
-			const formula = `{${combinedTotal}[${rawType}]}`;
+			const breakdown = typeEntries?.length
+				? typeEntries.map((e) => `${e.total} ${titleCase(e.type)}`).join(" + ")
+				: `${combinedTotal} ${titleCase(rawType)}`;
+			// Prefer the multi-type formula, but validate first: if the parser ever
+			// rejects it, fall back to today's single-type formula so the card survives.
+			let formula = `{${combinedTotal}[${rawType}]}`;
+			if (typeEntries?.length) {
+				const candidate = `{${typeEntries.map((e) => `${e.total}[${e.type}${e.materials?.length ? `,${e.materials.join(",")}` : ""}]`).join(",")}}`;
+				try {
+					const Cls = foundry.dice?.rolls?.DamageRoll ?? CONFIG?.Dice?.rolls?.find?.((c) => c.name === "DamageRoll") ?? null;
+					if (Cls?.validate?.(candidate)) formula = candidate;
+					else console.debug(`${Manager.id} | multi-type formula rejected, using single type`, candidate);
+				} catch {}
+			}
 			let roll = null;
 			try {
 				// PF2e registers DamageRoll as CONFIG.Dice.rolls
@@ -541,7 +674,7 @@ export class MonkFlurryTool {
 			} catch {
 				roll = await new Roll(`${combinedTotal}`).evaluate();
 			}
-			const flavor = `<h4 class="action"><strong>Damage Roll: Flurry of Blows (Combined)</strong> <span class="subtitle degree-of-success">(<span class="success">Hit</span>)</span></h4><div class="tags" data-tooltip-class="pf2e"><span class="tag" data-tooltip="PF2E.TraitDescriptionAttack" data-trait="attack">Attack</span><hr class="vr"><span class="tag tag_alt" data-tooltip="PF2E.TraitDescriptionAgile">Agile</span><span class="tag tag_alt" data-tooltip="PF2E.TraitDescriptionFinesse">Finesse</span><span class="tag tag_alt" data-tooltip="PF2E.TraitDescriptionUnarmed">Unarmed</span></div><hr><div class="tags modifiers"><span class="tag tag_transparent" data-visibility="gm">${combinedTotal} ${typeLabel}</span><span class="tag tag_transparent" data-visibility="gm">${flavorAttack}</span></div>`;
+			const flavor = `<h4 class="action"><strong>Damage Roll: Flurry of Blows (Combined)</strong> <span class="subtitle degree-of-success">(<span class="success">Hit</span>)</span></h4><div class="tags" data-tooltip-class="pf2e"><span class="tag" data-tooltip="PF2E.TraitDescriptionAttack" data-trait="attack">Attack</span><hr class="vr"><span class="tag tag_alt" data-tooltip="PF2E.TraitDescriptionAgile">Agile</span><span class="tag tag_alt" data-tooltip="PF2E.TraitDescriptionFinesse">Finesse</span><span class="tag tag_alt" data-tooltip="PF2E.TraitDescriptionUnarmed">Unarmed</span></div><hr><div class="tags modifiers"><span class="tag tag_transparent" data-visibility="gm">${breakdown}</span><span class="tag tag_transparent" data-visibility="gm">${flavorAttack}</span></div>`;
 			const speaker = ChatMessage.getSpeaker({ actor: attacker, token: attackerToken?.document ?? null });
 			await ChatMessage.create({
 				speaker,
@@ -564,6 +697,7 @@ export class MonkFlurryTool {
 						},
 						origin: { actor: attacker.uuid, type: "weapon" },
 					},
+					[Manager.id]: { flurryCombined: true },
 				},
 			});
 			return;
@@ -576,6 +710,7 @@ export class MonkFlurryTool {
 			speaker: ChatMessage.getSpeaker({ actor: attacker, token: attackerToken?.document ?? null }),
 			content,
 			flavor: `Flurry of Blows — Combined Damage ${combinedTotal}`,
+			flags: { [Manager.id]: { flurryCombined: true } },
 		});
 	}
 
@@ -636,6 +771,8 @@ export class MonkFlurryTool {
 			_prevCheck = _userFlags?.showCheckDialogs;
 			_prevDamage = _userFlags?.showDamageDialogs;
 			if (_userFlags) { _userFlags.showCheckDialogs = false; _userFlags.showDamageDialogs = false; }
+			// Message IDs before the first roll: used to settle exactly our dice later.
+			const macroMsgIds = new Set([...game.messages.keys()]);
 			let result1 = null, result2 = null;
 			// Perform two attacks: MAP 0 and MAP -4 (agile). Wolf Jaws is agile, fist is agile? Fist from Powerful Fist? Actually fist has agile.
 			// Use variants if available; otherwise apply -4 manual
@@ -652,23 +789,20 @@ export class MonkFlurryTool {
 			// (section.fc-flatcheck-buttons -> div.fc-check -> span.fc-rolls + button). Native shows number inside a box near the button, green/red.
 			// We auto-click that button so the result looks exactly native, without adding our own text.
 			let flat1 = null, flat2 = null;
+			// Flat check: purely native — auto-click the system's own
+			// <button data-action="roll-flatcheck"> on the attack card (see AGENTS.md:
+			// Concealed/Hidden flat checks). No button = no flat check, hit stands.
 			const tryFlatViaButton = async (result) => {
 				if (!result?.hit || !result.message) return null;
-				let flat = await this._autoRollFlatCheck(result.message);
-				if (flat) return flat;
-				// Fallback: button not rendered (e.g. no concealed) but actor still has condition per live check
-				const dc = this._getFlatCheckDC(targetActor);
-				if (dc) {
-					flat = await this._rollFlatCheck(dc);
-					await this._patchAttackWithFlat(result.message, flat, dc, targetActor);
-					return flat;
-				}
-				return null;
+				return await this._autoRollFlatCheck(result.message);
 			};
 			flat1 = await tryFlatViaButton(result1);
 			if (flat1) { result1.flat = flat1; if (!flat1.success) { result1.hit = false; result1.degree = "failure"; result1.flatMiss = true; } }
 			flat2 = await tryFlatViaButton(result2);
 			if (flat2) { result2.flat = flat2; if (!flat2.success) { result2.hit = false; result2.degree = "failure"; result2.flatMiss = true; } }
+
+			// Breather: let attack/flat dice settle before damage dice spawn.
+			await this._breather();
 
 			// Evaluate hits (flat-check failures have already been turned into misses)
 			const hits = [];
@@ -682,70 +816,68 @@ export class MonkFlurryTool {
 			for (const h of hits) {
 				const isCrit = h.res.degree === "criticalSuccess";
 				const dmg = await this._rollDamage(strike, isCrit);
-				damages.push({ idx: h.idx, isCrit, total: dmg.total, roll: dmg.roll });
+				// Keep per-type instance totals for the combined card (persistent
+				// excluded — ongoing damage, own application flow).
+				const inst = [];
+				try {
+					for (const i of dmg.roll?.instances ?? []) {
+						if (i.persistent) continue;
+						inst.push({ type: String(i.type ?? "untyped").toLowerCase(), total: Number(i.total ?? 0) || 0, materials: [...(i.materials ?? [])] });
+					}
+				} catch {}
+				damages.push({ idx: h.idx, isCrit, total: dmg.total, roll: dmg.roll, instances: inst });
 				combinedTotal += dmg.total;
 				damageDetails.push(`${flavorAttack} ${h.idx + 1}${isCrit ? " (crit)" : ""}: ${dmg.total}`);
 			}
 
-			// Summary: native attack+damage cards are already in chat; wait for Dice So Nice then add a combined damage card
+			// Native attack+damage cards are already in chat. Settle their dice
+			// before the combined card so animations don't pile onto one frame,
+			// then post the kept combined-damage Apply card. The single text
+			// summary goes at the very end (no intermediate messages).
+			const bothHit = damages.length === 2;
 			if (damages.length) {
-				const bothHit = damages.length === 2;
-				// Let Dice So Nice finish its 3D animation before the summary appears, otherwise cards overlap
-				const flatCount = (flat1 ? 1 : 0) + (flat2 ? 1 : 0);
-				const diceCount = 2 + damages.length + flatCount; // 2 attacks + each damage roll + flat checks
-				await this._waitForDice(diceCount);
+				await this._waitForMacroDice(macroMsgIds);
 				const dmgType = strike.item?.system?.damage?.damageType ?? strike.item?.system?.damage?.base?.damageType ?? (hasWolfStance ? "piercing" : "bludgeoning");
-				await this._createCombinedDamageMessage(attacker, attackerToken, targetActor, targetToken, combinedTotal, flavorAttack, dmgType, strike);
-				// Flat check summary - native flat result already patched into the attack card via button click; summary is for transparency (per answer 3 no new messages, but we keep a textual note)
-				const flatSummary = (flat1 || flat2) ? (() => {
-					const parts = [];
-					if (flat1) parts.push(`Attack 1 Flat Check DC ${flat1.dc}: ${flat1.total} -> ${flat1.success ? '<span class="success">Success</span>' : '<span class="failure">Failure - attack missed due to ' + (flat1.dc === 11 ? 'Hidden' : 'Concealed') + '</span>'}`);
-					if (flat2) parts.push(`Attack 2 Flat Check DC ${flat2.dc}: ${flat2.total} -> ${flat2.success ? '<span class="success">Success</span>' : '<span class="failure">Failure - attack missed due to ' + (flat2.dc === 11 ? 'Hidden' : 'Concealed') + '</span>'}`);
-					const failedFlats = [flat1, flat2].filter(f => f && !f.success);
-					if (failedFlats.length) parts.push(`<em>${failedFlats.length} hit(s) negated by flat check - like system does, treated as miss.</em>`);
-					return parts.length ? `<p class="hint">Flat Checks: ${parts.join(" | ")}</p>` : "";
-				})() : "";
-				// Update attack card visuals like system does when flat check fails - add a message edit if needed
-				// For now the summary carries the flat result; the attack cards themselves remain as rolled vs AC.
-				await ChatMessage.create({
-					speaker: ChatMessage.getSpeaker({ actor: attacker, token: attackerToken.document ?? null }),
-					content: `<div class="monk-flurry-card"><p class="hint">${flavorAttack}: ${damageDetails.join(" + ")} = <strong>Combined ${combinedTotal}</strong>${bothHit ? " - resistances/weaknesses apply once to the combined total" : ""}. MAP: 0 / -4 (agile). Flourish - once per turn.</p>${flatSummary}</div>`,
-					flavor: `Flurry of Blows - Summary Combined ${combinedTotal}`,
-					rolls: [flat1?.roll, flat2?.roll].filter(Boolean),
-				});
-			} else {
-				const flatMissCount = [flat1, flat2].filter(f => f && !f.success).length;
-				const flatSummaryElse = (() => {
-					if (!flat1 && !flat2) return "";
-					const parts = [flat1, flat2].filter(Boolean).map((f,i) => `Attack ${i+1} DC ${f.dc}: ${f.total} -> ${f.success ? "Success" : "Failure - missed due to " + (f.dc===11?"Hidden":"Concealed")}`);
-					return `<p class="hint">Flat Checks: ${parts.join(" | ")}</p>`;
-				})();
-				const flatCountElse = [flat1, flat2].filter(Boolean).length;
-				await this._waitForDice(2 + flatCountElse);
-				const reason = flatMissCount ? ` - ${flatMissCount} hit(s) negated by flat check (concealed/hidden)` : "";
-				await ChatMessage.create({
-					speaker: ChatMessage.getSpeaker({ actor: attacker }),
-					content: `<div class="monk-flurry-card"><h3>Flurry of Blows - ${attackerName} -> ${targetName}</h3><p><em>Both attacks missed${reason} - no damage, no Stunning Blows.</em></p>${flatSummaryElse}<p class="hint">Native attack rolls are shown above.</p></div>`,
-					flavor: "Flurry of Blows - No hits",
-					rolls: [flat1?.roll, flat2?.roll].filter(Boolean),
-				});
-				return;
+				// Merge per-type totals across both hits for the combined card.
+				const typeMap = new Map();
+				for (const d of damages) {
+					for (const inst of d.instances ?? []) {
+						const rec = typeMap.get(inst.type) ?? { total: 0, materials: new Set() };
+						rec.total += inst.total;
+						for (const m of inst.materials ?? []) rec.materials.add(m);
+						typeMap.set(inst.type, rec);
+					}
+				}
+				const typeEntries = [...typeMap.entries()].map(([type, rec]) => ({ type, total: rec.total, materials: [...rec.materials] }));
+				await this._createCombinedDamageMessage(attacker, attackerToken, targetActor, targetToken, combinedTotal, flavorAttack, dmgType, strike, typeEntries);
 			}
+			// Breather: let the combined damage dice settle before the Fort save die spawns.
+			await this._breather();
 
-			// Stunning Blows: if either hit and dealt damage (>0), Fort save vs class DC with incapacitation
+			// Stunning Blows: if either hit and dealt damage (>0), Fort save vs class DC with incapacitation.
+			// The native save card stays in chat; the result is recorded for the final summary.
+			// classDC is shared with Critical Specialization below (same DC).
+			let fortInfo = null;
 			const didDamage = combinedTotal > 0;
-			if (didDamage) {
-				const classDC = (() => {
-					try {
-						const cdc = attacker.getStatistic?.("classDC");
-						return cdc?.dc?.value ?? attacker.system?.proficiencies?.classDCs?.monk?.dc?.value ?? 16;
-					} catch { return 16; }
-				})();
-				// Roll target Fort save with incapacitation trait so system adjusts degree if target level > 2*attacker level
-				let fortResult = null;
+			const classDC = (() => {
 				try {
-					fortResult = await this._rollCheck(targetActor, "fortitude", classDC, { extraRollOptions: ["incapacitation"], traits: ["incapacitation"] });
-				} catch (e) { console.warn(`${Manager.id} | fort save failed`, e); }
+					const cdc = attacker.getStatistic?.("classDC");
+					return cdc?.dc?.value ?? attacker.system?.proficiencies?.classDCs?.monk?.dc?.value ?? 16;
+				} catch { return 16; }
+			})();
+			if (didDamage) {
+			// Roll target Fort save with incapacitation trait so system adjusts degree if target level > 2*attacker level.
+			// Outcome notes (Calm-note pattern) put the consequence on the native card itself.
+			let fortResult = null;
+			try {
+				const fortNotes = [
+					{ outcome: ["criticalSuccess"], selector: "", text: "<strong>Critical Success</strong> — no stun." },
+					{ outcome: ["success"], selector: "", text: "<strong>Success</strong> — no stun." },
+					{ outcome: ["failure"], selector: "", text: "<strong>Failure</strong> — Stunned 1." },
+					{ outcome: ["criticalFailure"], selector: "", text: "<strong>Critical Failure</strong> — Stunned 3." }
+				];
+				fortResult = await this._rollCheck(targetActor, "fortitude", classDC, { extraRollOptions: ["incapacitation"], traits: ["incapacitation"], extraRollNotes: fortNotes });
+			} catch (e) { console.warn(`${Manager.id} | fort save failed`, e); }
 				if (fortResult) {
 					let degree = fortResult.degree;
 					// Degree already adjusted by system if incapacitation passed; if system didn't, adjust manually for fallback rolls
@@ -759,33 +891,75 @@ export class MonkFlurryTool {
 							if (idx >= 0 && idx < 3) degree = order[idx + 1];
 						}
 					}
-					const stunOps = [];
-					if (degree === "failure") stunOps.push({ type: "stunned", value: 1 });
-					else if (degree === "criticalFailure") stunOps.push({ type: "stunned", value: 3 });
-					const outcomeText = { criticalSuccess: "Critical Success — no stun", success: "Success — no stun", failure: "Failure — Stunned 1", criticalFailure: "Critical Failure — Stunned 3" }[degree] ?? degree;
-					// fortResult already created its native save message via _rollCheck (createMessage:true); summary is text-only to avoid duplicate Roll
-					await ChatMessage.create({
-						speaker: ChatMessage.getSpeaker({ actor: targetActor }),
-						content: `<div class="monk-flurry-card"><h4>Stunning Blows - ${targetName} Fort vs DC ${classDC}</h4><p>Roll: ${fortResult.total} - <strong>${outcomeText}</strong> ${degree?.includes("critical") ? "(incapacitation adjusted if applicable)" : ""}</p></div>`,
-						flavor: `Stunning Blows Fort Save - ${degree}`,
-					});
-					if (stunOps.length) await this._applyConditions(targetActor, stunOps);
+				const stunOps = [];
+				if (degree === "failure") stunOps.push({ type: "stunned", value: 1 });
+				else if (degree === "criticalFailure") stunOps.push({ type: "stunned", value: 3 });
+				if (stunOps.length) await this._applyConditions(targetActor, stunOps);
+				fortInfo = { total: fortResult.total, degree, classDC, stunned: stunOps.length ? (degree === "criticalFailure" ? "Stunned 3" : "Stunned 1") : null };
 				}
 			}
 
-			// Trip attempts: only if Wolf Stance and flanking, only on successful hits, up to 2 (stop on success)
+			// Critical Specialization (Expert Strikes, brawling): each critical hit
+			// forces a Fort save vs class DC — no incapacitation on this save.
+			// Failure means Slowed 1 until the end of the attacker's next turn
+			// (auto-tracked via pf2e.endTurn). Native save cards stay in chat;
+			// results join the final summary.
+			let critSpecInfo = null;
+			const hasExpertStrikes = attacker.items?.some?.((i) => (i.slug ?? i.system?.slug) === "expert-strikes") ?? false;
+			const crits = hits.filter((h) => h.res.degree === "criticalSuccess");
+			if (hasExpertStrikes && crits.length) {
+				const rows = [];
+				for (const crit of crits) {
+					let save = null;
+					try {
+						const notes = [
+							{ outcome: ["criticalSuccess"], selector: "", text: "<strong>Critical Success</strong> — no effect." },
+							{ outcome: ["success"], selector: "", text: "<strong>Success</strong> — no effect." },
+							{ outcome: ["failure"], selector: "", text: "<strong>Failure</strong> — Slowed 1 until the end of your next turn." },
+							{ outcome: ["criticalFailure"], selector: "", text: "<strong>Critical Failure</strong> — Slowed 1 until the end of your next turn." }
+						];
+						save = await this._rollCheck(targetActor, "fortitude", classDC, { extraRollNotes: notes });
+					} catch (e) { console.warn(`${Manager.id} | crit-spec save failed`, e); }
+					if (!save) continue;
+					let slowed = false;
+					if (save.degree === "failure" || save.degree === "criticalFailure") {
+						await this._applyConditions(targetActor, [{ type: "slowed", value: 1 }]);
+						slowed = true;
+						this._trackCritSpec(targetActor, attacker, targetToken);
+					}
+					rows.push({ idx: crit.idx, total: save.total, degree: save.degree, classDC, slowed });
+				}
+				if (rows.length) critSpecInfo = { rows };
+			}
+
+			// Trip attempts: only if Wolf Stance and flanking, only on successful hits, up to 2 (stop on success).
+			// Native athletics cards stay in chat; results are recorded for the final summary.
+			let tripInfo = null;
 			if (hasWolfStance && damages.length) {
+				// Breather: let save/damage dice settle before trip dice spawn.
+				await this._breather();
 				// Check flanking once (position hasn't changed between the two attacks)
 				let isFlanking = false;
 				try { isFlanking = this._isFlanking(attackerToken, targetToken); } catch {}
+				const reflexDC = (() => {
+					try { return targetActor.getStatistic?.("reflex")?.dc?.value ?? targetActor.system?.saves?.reflex?.dc?.value ?? 15; } catch { return 15; }
+				})();
 				if (!isFlanking) {
-					await ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: attacker }), content: `<p><em>Not flanking ${targetName} — no Wolf Stance trip attempts.</em></p>`, flavor: "Wolf Stance Trip — no flank" });
+					tripInfo = { flanked: false, reflexDC, rows: [], proneApplied: false, attackerProne: false };
 				} else {
-					const reflexDC = (() => {
-						try { return targetActor.getStatistic?.("reflex")?.dc?.value ?? targetActor.system?.saves?.reflex?.dc?.value ?? 15; } catch { return 15; }
-					})();
 					const proneOps = [];
+					const rows = [];
 					let tripped = false;
+					let attackerProne = false;
+					let tripCritDamage = 0;
+					// Outcome notes (Calm-note pattern) put the consequence on the
+					// native athletics card itself (MAP 0 path below).
+					const tripNotes = [
+						{ outcome: ["criticalSuccess"], selector: "", text: "<strong>Critical Success</strong> — Prone, plus 1d6 bludgeoning damage." },
+						{ outcome: ["success"], selector: "", text: "<strong>Success</strong> — the target falls Prone." },
+						{ outcome: ["failure"], selector: "", text: "<strong>Failure</strong> — no effect." },
+						{ outcome: ["criticalFailure"], selector: "", text: "<strong>Critical Failure</strong> — you fall Prone." }
+					];
 					for (const dmg of damages) {
 						if (tripped) break;
 						const mapPenalty = dmg.idx === 0 ? 0 : -4; // second attack MAP
@@ -800,18 +974,19 @@ export class MonkFlurryTool {
 								// PF2e check supports `modifiers`? We'll pass extra modifier via ad-hoc
 								// Fallback: if mapPenalty !=0, do manual roll
 								if (mapPenalty === 0) {
-									athResult = await athStat.check.roll({ dc: { value: reflexDC }, createMessage: true, skipDialog: true });
+									athResult = await athStat.check.roll({ dc: { value: reflexDC }, createMessage: true, skipDialog: true, extraRollNotes: tripNotes });
 									// Extract degree
 									const dos = athResult?.degreeOfSuccess;
 									let degree = typeof dos === "number" ? ["criticalFailure", "failure", "success", "criticalSuccess"][dos] : (athResult?.degree ?? dos);
 									if (!degree && athResult?.roll?.total) degree = this._degree(null, reflexDC, athResult.roll.total);
 									athResult = { roll: athResult.roll ?? athResult, total: athResult.roll?.total ?? athResult.total ?? 0, degree, raw: athResult };
 								} else {
-									// Manual with MAP
+									// Manual with MAP (a plain Roll has no outcome notes, so the
+									// consequence goes into the flavor, computed after the roll)
 									const baseMod = athStat.check.mod ?? 0;
 									const r = await new Roll("1d20 + @mod + @map", { mod: baseMod, map: mapPenalty }).evaluate();
-									await r.toMessage({ flavor: `Athletics (Trip) MAP ${mapPenalty} vs Reflex DC ${reflexDC}`, speaker: ChatMessage.getSpeaker({ actor: attacker }) });
 									const degree = this._degree(null, reflexDC, r.total);
+									await r.toMessage({ flavor: `Athletics (Trip) MAP ${mapPenalty} vs Reflex DC ${reflexDC} — ${this._tripOutcomeText(degree)}`, speaker: ChatMessage.getSpeaker({ actor: attacker }) });
 									athResult = { roll: r, total: r.total, degree, raw: null };
 								}
 							}
@@ -819,18 +994,17 @@ export class MonkFlurryTool {
 						if (!athResult) {
 							const baseMod = attacker.system?.skills?.athletics?.mod ?? 0;
 							const r = await new Roll("1d20 + @mod + @map", { mod: baseMod, map: mapPenalty }).evaluate();
-							await r.toMessage({ flavor: `Athletics (Trip) MAP ${mapPenalty} vs Reflex DC ${reflexDC}`, speaker: ChatMessage.getSpeaker({ actor: attacker }) });
-							athResult = { roll: r, total: r.total, degree: this._degree(null, reflexDC, r.total) };
+							const fallbackDegree = this._degree(null, reflexDC, r.total);
+							await r.toMessage({ flavor: `Athletics (Trip) MAP ${mapPenalty} vs Reflex DC ${reflexDC} — ${this._tripOutcomeText(fallbackDegree)}`, speaker: ChatMessage.getSpeaker({ actor: attacker }) });
+							athResult = { roll: r, total: r.total, degree: fallbackDegree };
 						}
 						const degree = athResult.degree;
 						const success = degree === "success" || degree === "criticalSuccess";
 						const critFail = degree === "criticalFailure";
-						// athResult already has its own native message (check.roll or toMessage); summary is text-only to avoid duplicate Roll
-						await ChatMessage.create({
-							speaker: ChatMessage.getSpeaker({ actor: attacker }),
-							content: `<div class="monk-flurry-card"><h4>Trip Attempt ${dmg.idx + 1} - ${attackerName} vs ${targetName} Reflex DC ${reflexDC} (MAP ${mapPenalty})</h4><p>Roll ${athResult.total} - <strong>${degree}</strong> ${success ? "- Prone!" : critFail ? "- Crit Fail! You fall prone." : ""}</p></div>`,
-							flavor: `Trip ${dmg.idx + 1} - ${degree}`,
-						});
+						if (degree === "criticalSuccess") {
+							tripCritDamage = await this._rollTripCritDamage(attacker, attackerToken, targetActor, targetToken);
+						}
+						rows.push({ idx: dmg.idx, mapPenalty, total: athResult.total, degree, success, critFail });
 						if (success) {
 							if (!targetActor.hasCondition?.("prone")) proneOps.push({ type: "prone" });
 							tripped = true;
@@ -838,12 +1012,57 @@ export class MonkFlurryTool {
 							// Attacker falls prone
 							if (!attacker.hasCondition?.("prone")) {
 								await this._applyConditions(attacker, [{ type: "prone" }]);
+								attackerProne = true;
 							}
 						}
 					}
-					if (proneOps.length) await this._applyConditions(targetActor, proneOps);
+				if (proneOps.length) await this._applyConditions(targetActor, proneOps);
+				tripInfo = { flanked: true, reflexDC, rows, proneApplied: proneOps.length > 0, attackerProne };
 				}
 			}
+
+			// One final summary card for the whole flurry (text-only: no `rolls`,
+			// so Dice So Nice doesn't replay dice over the settled animations).
+			try {
+				const pretty = (d) => ({ criticalSuccess: "Critical Success", success: "Success", failure: "Failure", criticalFailure: "Critical Failure" })[d] ?? d;
+				const atkDeg = (r) => r?.degree === "criticalSuccess" ? "Critical Hit" : r?.degree === "success" ? "Hit" : "Miss";
+				const parts = [];
+				parts.push(`<h3>Flurry of Blows — ${attackerName} → ${targetName}</h3>`);
+				for (const [res, flat, n, map] of [[result1, flat1, 1, 0], [result2, flat2, 2, -4]]) {
+					if (!res) continue;
+					const line = res.flatMiss ? `<strong>Miss</strong> (flat check failed)` : `<strong>${atkDeg(res)}</strong>`;
+					const flatBit = flat ? ` — flat ${flat.dc === 11 ? "Hidden" : "Concealed"} DC ${flat.dc}: ${flat.total} (${flat.success ? "Success" : "Failure"})` : "";
+					parts.push(`<p>Attack ${n} (MAP ${map}): ${res.total} — ${line}${flatBit}</p>`);
+				}
+				if (damages.length) {
+					parts.push(`<p>${flavorAttack}: ${damageDetails.join(" + ")} = <strong>Combined ${combinedTotal}</strong>${bothHit ? " — resistances/weaknesses apply once to the combined total" : ""}. Flourish — once per turn.</p>`);
+				} else {
+					const flatMissCount = [flat1, flat2].filter(f => f && !f.success).length;
+					parts.push(`<p><em>Both attacks missed${flatMissCount ? ` (${flatMissCount} negated by flat check)` : ""} — no damage, no Stunning Blows.</em></p>`);
+				}
+				if (fortInfo) {
+					parts.push(`<p>Stunning Blows: Fort ${fortInfo.total} vs DC ${fortInfo.classDC} — <strong>${pretty(fortInfo.degree)}</strong>${fortInfo.stunned ? ` — ${fortInfo.stunned}` : " — no stun"}.</p>`);
+				}
+				if (critSpecInfo) {
+					for (const row of critSpecInfo.rows) {
+						parts.push(`<p>Critical Specialization (attack ${row.idx + 1}): Fort ${row.total} vs DC ${row.classDC} — <strong>${pretty(row.degree)}</strong>${row.slowed ? " — Slowed 1 (until end of your next turn)" : " — no effect"}.</p>`);
+					}
+				}
+				if (tripInfo) {
+					if (!tripInfo.flanked) {
+						parts.push(`<p>Trip: not flanking ${targetName} — no Wolf Stance trip attempts.</p>`);
+					} else {
+						for (const row of tripInfo.rows) {
+							parts.push(`<p>Trip ${row.idx + 1} (MAP ${row.mapPenalty}): ${row.total} vs Reflex DC ${tripInfo.reflexDC} — <strong>${pretty(row.degree)}</strong>${row.success ? " — Prone!" : row.critFail ? " — crit fail, you fall prone" : ""}.</p>`);
+						}
+					}
+				}
+				await ChatMessage.create({
+					speaker: ChatMessage.getSpeaker({ actor: attacker, token: attackerToken.document ?? null }),
+					content: `<div class="monk-flurry-card">${parts.join("")}</div>`,
+					flavor: "Flurry of Blows — Summary",
+				});
+			} catch (e) { console.warn(`${Manager.id} | flurry summary failed`, e); }
 
 		} catch (e) {
 			console.error(`${Manager.id} | monkFlurry execute failed`, e);

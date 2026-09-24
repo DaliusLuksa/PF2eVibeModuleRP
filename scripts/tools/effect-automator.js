@@ -259,13 +259,45 @@ export class EffectAutomatorTool {
 		} else {
 			dc = Math.max(0, Number(rule.roll?.dc) || 0);
 		}
+		// Let the SYSTEM apply incapacitation natively (Statistic.roll turns the
+		// `incapacitation` roll option into a dosAdjustment: saves get one degree
+		// better when the target's level exceeds twice the spell's rank). The chat
+		// card is then fully native and the callback outcome is already adjusted,
+		// so no message patching is needed at all.
+		let incapItem = null;
+		try {
+			incapItem = await this._resolveIncapItem(actor, rule, triggerItem);
+		} catch {}
+		// Explainer notes, rendered by the system inside the card (bard-helper
+		// pattern: notes with outcome selectors). Only attached when the bump
+		// will actually apply (same condition the system uses), so the text
+		// never claims an adjustment that didn't happen. Matched against the
+		// ADJUSTED outcome: adjusted Failure/Success can only come from a bump,
+		// so their text names the original degree; Critical Success may also be
+		// natural, so its text stays generic.
+		let incapNotes = [];
+		if ( incapItem ) {
+			const spellRank = Number(incapItem.rank ?? incapItem.system?.location?.heightenedLevel ?? incapItem.system?.level?.value ?? 0) || 0;
+			const targetLevel = Number(actor.level ?? actor.system?.details?.level?.value ?? 0) || 0;
+			if ( targetLevel > spellRank * 2 ) {
+				const detail = Manager.localize("effectAutomator.incapNoteDetail", { target: targetLevel, rank: spellRank });
+				incapNotes = [
+					{ outcome: ["failure"], selector: "", text: `${Manager.localize("effectAutomator.incapNoteRaised", { from: Manager.localize("effectAutomator.critFailure") })} ${detail}` },
+					{ outcome: ["success"], selector: "", text: `${Manager.localize("effectAutomator.incapNoteRaised", { from: Manager.localize("effectAutomator.failure") })} ${detail}` },
+					{ outcome: ["criticalSuccess"], selector: "", text: `${Manager.localize("effectAutomator.incapNoteApplies")} ${detail}` }
+				];
+			}
+		}
+		const incapParams = incapItem
+			? { item: incapItem, extraRollOptions: ["incapacitation"], traits: ["incapacitation"], ...(incapNotes.length ? { extraRollNotes: incapNotes } : {}) }
+			: {};
 		try {
 			await statistic.roll({
 				dc: { value: dc },
 				skipDialog: true,
+				...incapParams,
 				callback: async (roll, outcome, message) => {
-					const adjusted = await this._adjustForIncapacitation(actor, rule, triggerItem, outcome);
-					this._applyOutcome(actor, rule, adjusted, triggerItem).catch((error) =>
+					this._applyOutcome(actor, rule, outcome, triggerItem).catch((error) =>
 						console.warn(`${Manager.id} | could not apply outcome for ${actor.name}`, error)
 					);
 				}
@@ -273,6 +305,50 @@ export class EffectAutomatorTool {
 		} catch (error) {
 			console.warn(`${Manager.id} | could not roll ${saveType} for ${actor.name}`, error);
 		}
+	}
+
+	/**
+	 * Resolve the source item for incapacitation handling: the cast spell behind
+	 * the triggering marker (its heightening-aware `rank` sets the system's
+	 * `2 x rank` threshold), falling back to a spell looked up by effect name.
+	 * Returns null when nothing with the incapacitation trait applies.
+	 */
+	static async _resolveIncapItem(targetActor, rule, triggerItem) {
+		const hasIncap = (doc) => !!doc?.system?.traits?.value?.includes?.("incapacitation");
+		const effectItem = triggerItem ?? targetActor.items.find((item) => this._matchesSource(item, rule.effectUuid)) ?? null;
+		const originItemUuid = effectItem?.flags?.pf2e?.origin ?? effectItem?.system?.context?.origin?.item ?? null;
+		if ( originItemUuid ) {
+			try {
+				const maybe = await foundry.utils.fromUuid(originItemUuid).catch(() => null);
+				if ( maybe && hasIncap(maybe) ) return maybe;
+			} catch {}
+			try {
+				const maybe = foundry.utils.fromUuidSync(originItemUuid);
+				if ( maybe && hasIncap(maybe) ) return maybe;
+			} catch {}
+		}
+		if ( rule.effectUuid ) {
+			try {
+				const effDoc = await foundry.utils.fromUuid(rule.effectUuid).catch(() => null);
+				if ( effDoc?.name?.startsWith("Spell Effect: ") ) {
+					const spellName = effDoc.name.replace(/^Spell Effect:\s*/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+					const worldSpell = game.items.find((i) => i.isOfType?.("spell") && i.name === spellName) ?? null;
+					if ( worldSpell && hasIncap(worldSpell) ) return worldSpell;
+					const pack = game.packs.get("pf2e.spells-srd");
+					if ( pack ) {
+						try {
+							const index = await pack.getIndex();
+							const entry = index.find((e) => e.name === spellName);
+							if ( entry ) {
+								const spell = await pack.getDocument(entry._id).catch(() => null);
+								if ( spell && hasIncap(spell) ) return spell;
+							}
+						} catch {}
+					}
+				}
+			} catch {}
+		}
+		return null;
 	}
 
 	/** Resolve caster's DC correctly: specific spellcasting entry that can cast the spell, else highest spell DC, else classOrSpell. */
@@ -335,57 +411,6 @@ export class EffectAutomatorTool {
 		} catch (error) {
 			console.warn(`${Manager.id} | _resolveCasterDC failed`, error);
 			return null;
-		}
-	}
-
-	/** Incapacitation: if source spell has the trait, bump outcome one degree better when target level is high. */
-	static async _adjustForIncapacitation(targetActor, rule, triggerItem, outcome) {
-		try {
-			let spell = null;
-			let effectItem = triggerItem ?? targetActor.items.find((item) => this._matchesSource(item, rule.effectUuid)) ?? null;
-			const originItemUuid = effectItem?.flags?.pf2e?.origin ?? effectItem?.system?.context?.origin?.item ?? null;
-			if ( originItemUuid ) {
-				try { const maybe = await foundry.utils.fromUuid(originItemUuid).catch(() => null); if ( maybe?.isOfType?.("spell") ) spell = maybe; } catch {}
-				if ( !spell ) { try { const maybe = foundry.utils.fromUuidSync(originItemUuid); if ( maybe?.isOfType?.("spell") ) spell = maybe; } catch {} }
-			}
-			if ( !spell && rule.effectUuid ) {
-				try {
-					const effDoc = await foundry.utils.fromUuid(rule.effectUuid).catch(() => null);
-					if ( effDoc?.name?.startsWith("Spell Effect: ") ) {
-						const spellName = effDoc.name.replace(/^Spell Effect:\s*/, "").replace(/\s*\(.*\)\s*$/, "").trim();
-						spell = game.items.find((i) => i.isOfType?.("spell") && i.name === spellName) ?? null;
-						if ( !spell ) {
-							const pack = game.packs.get("pf2e.spells-srd");
-							if ( pack ) {
-								try {
-									const index = await pack.getIndex();
-									const entry = index.find((e) => e.name === spellName);
-									if ( entry ) spell = await pack.getDocument(entry._id).catch(() => null);
-								} catch {}
-							}
-						}
-					}
-				} catch {}
-			}
-			if ( !spell ) return outcome;
-			const hasIncap = !!spell.system?.traits?.value?.includes?.("incapacitation");
-			if ( !hasIncap ) return outcome;
-			let spellRank = Number(spell.system?.level?.value ?? 0) || 0;
-			try {
-				const origin = effectItem?.system?.context?.origin;
-				if ( origin?.castRank ) spellRank = Number(origin.castRank) || spellRank;
-			} catch {}
-			const targetLevel = Number(targetActor.level ?? targetActor.system?.details?.level?.value ?? 0) || 0;
-			if ( !(targetLevel > spellRank * 2) ) return outcome;
-			const order = ["criticalFailure", "failure", "success", "criticalSuccess"];
-			const idx = order.indexOf(outcome);
-			if ( idx === -1 || idx >= order.length - 1 ) return outcome;
-			const bumped = order[idx + 1];
-			console.debug(`${Manager.id} | incapacitation bumped ${outcome} -> ${bumped} for ${targetActor.name} (level ${targetLevel} vs rank ${spellRank})`);
-			return bumped;
-		} catch (error) {
-			console.warn(`${Manager.id} | incapacitation adjust failed`, error);
-			return outcome;
 		}
 	}
 

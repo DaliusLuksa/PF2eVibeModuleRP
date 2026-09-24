@@ -1,0 +1,30 @@
+<section class="vibe-ranger-flurry">
+    {{#if gated}}
+    <p class="rf-line">{{rangerName}}{{#if bowName}} · {{bowName}}{{/if}}{{#if targetName}} → {{targetName}}{{/if}}</p>
+
+    <div class="rf-row">
+        <div class="rf-field">
+            <label for="rf-ammo1">{{@root.i18n 'ammoFirst'}}</label>
+            <select id="rf-ammo1" name="ammo1">
+                {{#each ammo}}
+                <option value="{{this.id}}" {{#if this.selected1}}selected{{/if}}>{{this.label}}</option>
+                {{/each}}
+            </select>
+        </div>
+
+        <div class="rf-field">
+            <label for="rf-ammo2">{{@root.i18n 'ammoSecond'}}</label>
+            <select id="rf-ammo2" name="ammo2">
+                {{#each ammo}}
+                <option value="{{this.id}}" {{#if this.selected2}}selected{{/if}}>{{this.label}}</option>
+                {{/each}}
+            </select>
+        </div>
+    </div>
+    <p class="rf-hint">{{@root.i18n 'windowHint'}}</p>
+
+    <button type="button" class="rf-shoot" data-action="shoot"><i class="fa-solid fa-bow-arrow"></i> {{@root.i18n 'shoot'}}</button>
+    {{else}}
+    <p class="rf-gate">{{gateMessage}}</p>
+    {{/if}}
+</section>

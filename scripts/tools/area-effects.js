@@ -911,6 +911,7 @@ export class AreaEffectsTool {
 		// Resolve caster for Effect Automator's Caster's DC: prefer region's pf2e origin spell's actor
 		let originActorUuid = null;
 		let originItemUuid = null;
+		let originCastRank = null;
 		try {
 			const region = _region ?? (originUuid?.startsWith?.("Region.") ? canvas.scene?.regions?.get(originUuid.split(".").pop?.() ?? originUuid) ?? null : null) ?? (() => {
 				// originUuid may be a behavior uuid like "RegionBehavior.xxx" — find its region
@@ -922,6 +923,10 @@ export class AreaEffectsTool {
 			const pf2eOrigin = region?.getFlag?.("pf2e", "origin") ?? region?.flags?.pf2e?.origin ?? null;
 			if ( pf2eOrigin?.uuid ) {
 				originItemUuid = pf2eOrigin.uuid;
+				// getOriginData() sets castRank = spell rank (heightening-aware), so
+				// carry it onto the marker for Effect Automator's incapacitation check.
+				const rank = Number(pf2eOrigin.castRank);
+				if ( Number.isInteger(rank) && rank > 0 ) originCastRank = rank;
 				// Spell uuid like Actor.<id>.Item.<id> or Compendium...
 				try {
 					const spellDoc = await foundry.utils.fromUuid(pf2eOrigin.uuid).catch(() => null) ?? foundry.utils.fromUuidSync(pf2eOrigin.uuid) ?? null;
@@ -940,12 +945,13 @@ export class AreaEffectsTool {
 				[Manager.id]: { ...(effectItem.flags?.[Manager.id] ?? {}), areaOrigin: originUuid, areaSource: effectUuid }
 			}
 		}, { overwrite: false });
-		if ( originActorUuid || originItemUuid ) {
+		if ( originActorUuid || originItemUuid || originCastRank != null ) {
 			source.system ??= {};
 			source.system.context ??= {};
 			source.system.context.origin ??= {};
 			if ( originActorUuid ) source.system.context.origin.actor = originActorUuid;
 			if ( originItemUuid ) source.system.context.origin.item = originItemUuid;
+			if ( originCastRank != null ) source.system.context.origin.castRank = originCastRank;
 		}
 		if (actor.testUserPermission(game.user, "OWNER")) {
 			await actor.createEmbeddedDocuments("Item", [source]);

@@ -1,0 +1,66 @@
+<section class="vibe-ranger-hub">
+    {{#if gated}}
+    <p class="rh-ranger">{{rangerName}} — {{@root.i18n 'baseLabel'}} {{base}} {{@root.i18n 'feet'}} · {{@root.i18n 'currentLabel'}} {{effective}} {{@root.i18n 'feet'}} ({{bonusText}})</p>
+
+    <div class="rh-row">
+        <div class="rh-field rh-check">
+            <label class="rh-check-label"><input type="checkbox" name="mounted" {{#if mounted}}checked{{/if}}> {{@root.i18n 'mounted'}}</label>
+        </div>
+
+        <div class="rh-field rh-speed">
+            <label for="rh-mount-ft">{{@root.i18n 'mountSpeed'}}</label>
+            <div class="rh-size">
+                <input type="number" id="rh-mount-ft" name="mountFt" min="5" step="5" value="{{mountFt}}">
+                <span class="rh-unit">{{@root.i18n 'feet'}}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="rh-row rh-arrows">
+        <div class="rh-field rh-track">
+            <label for="rh-track-ammo">{{@root.i18n 'arrowsLabel'}}</label>
+            <select id="rh-track-ammo" name="trackAmmo">
+                {{#each trackAmmo}}
+                <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>
+                {{/each}}
+            </select>
+        </div>
+
+        <div class="rh-field rh-shot">
+            <label for="rh-shot">{{@root.i18n 'shotLabel'}}</label>
+            <input type="number" id="rh-shot" name="shot" min="0" step="1" value="{{shot}}">
+        </div>
+
+        <div class="rh-field rh-pct">
+            <label for="rh-pct">{{@root.i18n 'pctLabel'}}</label>
+            <div class="rh-size">
+                <input type="number" id="rh-pct" name="pct" min="0" max="100" step="1" value="{{pct}}">
+                <span class="rh-unit">%</span>
+            </div>
+        </div>
+
+        <button type="button" class="rh-recover" data-recover-arrows {{#if recovered}}disabled{{/if}}>{{#if recovered}}{{@root.i18n 'recoveredButton'}}{{else}}{{@root.i18n 'recoverButton'}}{{/if}}</button>
+    </div>
+
+    {{#if recovered}}
+    <p class="rh-recovered-line">{{recoveredLine}}</p>
+    {{/if}}
+
+    <div class="rh-row">
+        <div class="rh-field rh-ammo">
+            <label for="rh-ammo">{{@root.i18n 'ammoLabel'}}</label>
+            <select id="rh-ammo" name="hubAmmo">
+                {{#each ammo}}
+                <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>
+                {{/each}}
+            </select>
+        </div>
+
+        <button type="button" class="rh-activate" data-activate-ammo>{{@root.i18n 'activateButton'}}</button>
+    </div>
+
+    <button type="button" class="rh-flurry" data-open-flurry><i class="fa-solid fa-bow-arrow"></i> {{@root.i18n 'flurryButton'}}</button>
+    {{else}}
+    <p class="rh-gate">{{gateMessage}}</p>
+    {{/if}}
+</section>

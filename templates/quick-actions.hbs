@@ -1,0 +1,32 @@
+<section class="vibe-quick-actions-body">
+    <div class="qa-browser-tab">
+        <div class="qa-control-area">
+            <div class="qa-headercontainer">
+                <input type="search" name="search" value="{{search}}" placeholder="{{@root.i18n 'searchPlaceholder'}}" autocomplete="off" spellcheck="false">
+                <button type="button" class="qa-clear" data-action="clearFilters">{{@root.i18n 'clearFilters'}}</button>
+            </div>
+            <fieldset class="qa-group">
+                <legend>{{@root.i18n 'typeLabel'}}</legend>
+                <label class="qa-check"><input type="checkbox" name="showMacro" {{#if showMacro}}checked{{/if}}> {{@root.i18n 'filterMacro'}}</label>
+                <label class="qa-check"><input type="checkbox" name="showAction" {{#if showAction}}checked{{/if}}> {{@root.i18n 'filterAction'}}</label>
+            </fieldset>
+        </div>
+        <div class="qa-results">
+            {{#if rows.length}}
+            <ul class="qa-result-list">
+                {{#each rows}}
+                <li class="qa-row{{#if this.missing}} qa-missing{{/if}}" draggable="{{#unless this.missing}}true{{else}}false{{/unless}}" data-id="{{this.id}}" data-kind="{{this.kind}}" data-name="{{this.name}}" {{#if this.uuid}}data-uuid="{{this.uuid}}"{{/if}}>
+                    <img class="qa-image" src="{{this.img}}" alt="">
+                    <span class="qa-name"><button type="button" class="qa-result-link" data-action="useEntry" data-id="{{this.id}}" {{#if this.missing}}disabled data-tooltip="{{@root.i18n 'missingTip'}}"{{else}}data-tooltip="{{@root.i18n 'useTip'}}"{{/if}}>{{this.name}}</button></span>
+                    <span class="qa-kind">{{this.kindLabel}}</span>
+                </li>
+                {{/each}}
+            </ul>
+            <p class="qa-empty" hidden>{{@root.i18n 'noResults'}}</p>
+            {{else}}
+            <p class="qa-empty">{{@root.i18n 'empty'}}</p>
+            {{/if}}
+        </div>
+    </div>
+    <p class="qa-hint">{{@root.i18n 'hint'}}</p>
+</section>

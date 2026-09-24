@@ -1,0 +1,176 @@
+/* Ranger Hub window */
+.vibe-ranger-hub {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Section spacing lives on the sections themselves (explicit margins
+  below), NOT on a parent gap — a parent gap demonstrably did nothing
+  client-side. No top padding: the window frame already offsets content,
+  so any top pad just floats a dead space above the info line. */
+  gap: 0;
+  padding: 0 0.75rem 0.75rem;
+  font-size: var(--font-size-13);
+}
+
+.rh-ranger {
+  margin: 0 0 1.25rem;
+  font-weight: bold;
+}
+
+/* Mounted checkbox + companion Speed on a single row (Area Effects style). */
+.rh-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  margin-bottom: 1.25rem;
+}
+
+.rh-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.rh-check {
+  flex: 1.4;
+  min-width: 0;
+  justify-content: flex-end;
+  padding-bottom: 0.2rem;
+}
+
+.rh-speed {
+  flex: 1;
+  min-width: 0;
+}
+
+.rh-field > label {
+  font-weight: bold;
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+}
+
+.rh-check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  font-size: var(--font-size-12);
+  font-weight: bold;
+  color: var(--color-text-light-6);
+}
+
+.rh-size {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.rh-size input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.rh-unit {
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+}
+
+.rh-hint {
+  margin: 0;
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+  font-style: italic;
+}
+
+.rh-gate {
+  margin: 0.25rem 0;
+  color: var(--color-text-light-6);
+  font-style: italic;
+}
+
+/* Arrow counter row: tracked-stack picker + shot count + recover % +
+   Recover button on a single row (sits between mount and ammo rows). */
+.rh-track {
+  flex: 1.4;
+  min-width: 0;
+}
+
+.rh-track select {
+  width: 100%;
+}
+
+.rh-shot {
+  flex: 0 0 3rem;
+  min-width: 0;
+}
+
+.rh-shot input[type="number"] {
+  width: 100%;
+}
+
+.rh-pct {
+  flex: 0 0 3.75rem;
+  min-width: 0;
+}
+
+.rh-pct input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.rh-recover {
+  flex: none;
+  align-self: flex-end;
+  padding: 0.3rem 0.6rem;
+  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.rh-recover:disabled {
+  cursor: default;
+}
+
+/* Recovery record line: only rendered after Recover (an absent element
+takes no space), cleared on the next combat start. Grouped visually with
+the arrow row above via the negative top margin. */
+.rh-recovered-line {
+  margin: -0.5rem 0 1.25rem;
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+  font-style: italic;
+}
+
+/* Ammo dropdown + Activate button on a single row. */
+.rh-ammo {
+  flex: 1;
+  min-width: 0;
+}
+
+.rh-ammo select {
+  width: 100%;
+}
+
+.rh-activate {
+  flex: none;
+  align-self: flex-end;
+  padding: 0.3rem 0.6rem;
+  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.rh-flurry {
+  margin-top: 0;
+  padding: 0.3rem 0.6rem;
+  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}

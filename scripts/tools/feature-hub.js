@@ -5,6 +5,8 @@ import { RollCounterTool } from "./roll-counter.js";
 import { AreaEffectsTool } from "./area-effects.js";
 import { HideCursorTool } from "./hide-cursor.js";
 import { EffectAutomatorTool } from "./effect-automator.js";
+import { RangerHubTool } from "./ranger-hub.js";
+import { QuickActionsTool } from "./quick-actions.js";
 
 const MODULE_ROOT = "modules/pf2e-vibemodulerp";
 
@@ -63,6 +65,22 @@ export class FeatureHubTool {
 			// the toggle action rather than opening a window.
 			visible: () => true,
 			open: () => HideCursorTool.toggle()
+		},
+		{
+			id: "ranger-hub",
+			title: () => Manager.localize("rangerHub.title"),
+			icon: "fa-solid fa-horse",
+			enabled: () => Manager.isEnabled(RangerHubTool.id),
+			visible: () => true,
+			open: () => RangerHubTool._toggleWindow()
+		},
+		{
+			id: "quick-actions",
+			title: () => Manager.localize("quickActions.title"),
+			icon: "fa-solid fa-bolt",
+			enabled: () => Manager.isEnabled(QuickActionsTool.id),
+			visible: () => true,
+			open: () => QuickActionsTool._toggleWindow()
 		},
 		{
 			id: "effect-automator",

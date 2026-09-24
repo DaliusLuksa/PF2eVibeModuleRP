@@ -1,4 +1,5 @@
 import { Manager } from "../core/manager.js";
+import { ActionTrackerTool } from "./action-tracker.js";
 
 const SOCKET_EVENT = `module.${Manager.id}`;
 const SOCKET_ACTION_BADGES = "sustainReminderBadges";
@@ -30,6 +31,7 @@ export class SustainReminderTool {
 		{ key: "chatMessage", type: Boolean, default: true, scope: "world" },
 		{ key: "trackerBadge", type: Boolean, default: true, scope: "world" },
 		{ key: "patchEffects", type: Boolean, default: true, scope: "world" },
+		{ key: "removeFromDead", type: Boolean, default: true, scope: "world" },
 		{ key: "extraSpells", type: String, default: "", scope: "world", requiresReload: true }
 	];
 
@@ -52,6 +54,9 @@ export class SustainReminderTool {
 		Hooks.on("deleteItem", this._onItemChanged.bind(this));
 		Hooks.on("deleteActor", this._onItemChanged.bind(this));
 		Hooks.on("createItem", this._onCreateItem.bind(this));
+		Hooks.on("renderChatMessageHTML", this._onRenderChatMessage.bind(this));
+		Hooks.on("updateActor", this._onActorMaybeDead.bind(this));
+		Hooks.on("createActiveEffect", this._onActiveEffectMaybeDead.bind(this));
 		this._refreshBadgeState();
 		// Self-heal badges if a tracker render was missed or a socket race lost.
 		this._interval = setInterval(() => {
@@ -93,6 +98,10 @@ export class SustainReminderTool {
 	static _activeSustainedEffects() {
 		const byCaster = new Map();
 		for (const target of this._allActors()) {
+			// Effects on corpses are never listed: they are deleted on death
+			// (see `_sweepDeadTarget`) and anything surviving is hidden here,
+			// so the reminder and the tracker badge both ignore dead targets.
+			if (this._isDead(target)) continue;
 			for (const effect of target.items ?? []) {
 				if (effect.type !== "effect") continue;
 				const system = effect.system ?? {};
@@ -107,6 +116,54 @@ export class SustainReminderTool {
 			}
 		}
 		return byCaster;
+	}
+
+	/* -------------------------------------------- */
+	/*  Dead targets                              */
+	/* -------------------------------------------- */
+
+	/** True only for genuinely dead actors (Dead status) - not merely downed. */
+	static _isDead(actor) {
+		return !!actor?.isDead;
+	}
+
+	static _onActorMaybeDead(actor) {
+		if (!game.user.isGM) return;
+		if (!Manager.setting(this.id, "removeFromDead")) return;
+		if (!this._isDead(actor)) return;
+		this._sweepDeadTarget(actor);
+	}
+
+	static _onActiveEffectMaybeDead(effect) {
+		if (!game.user.isGM) return;
+		if (!Manager.setting(this.id, "removeFromDead")) return;
+		const actor = effect?.parent ?? null;
+		if (!actor || !this._isDead(actor)) return;
+		this._sweepDeadTarget(actor);
+	}
+
+	/**
+	 * Delete every caster-origin sustained effect off a dead target, so the
+	 * spell stops lingering on the corpse. GM-only (universal ownership);
+	 * idempotent - a sweep that finds nothing deletes nothing. The resulting
+	 * `deleteItem` hooks refresh the tracker badge on their own.
+	 */
+	static async _sweepDeadTarget(target) {
+		try {
+			const ids = (target.items ?? [])
+				.filter(
+					(effect) =>
+						effect.type === "effect" &&
+						!!effect.system?.duration?.sustained &&
+						!effect.system?.expired &&
+						!!effect.system?.context?.origin?.actor
+				)
+				.map((effect) => effect.id);
+			if (!ids.length) return;
+			await target.deleteEmbeddedDocuments("Item", ids);
+		} catch (error) {
+			console.warn(`${Manager.id} | could not sweep sustained effects off dead "${target?.name}"`, error);
+		}
 	}
 
 	/* -------------------------------------------- */
@@ -132,16 +189,109 @@ export class SustainReminderTool {
 				const on = target
 					? ` ${Manager.localize("sustain.on", { target: target.name })}`
 					: "";
-				return `<li>${effect.name}${on}</li>`;
+				const max = this._maxRounds(effect);
+				const counter =
+					max === null
+						? ""
+						: ` <span class="vibe-sustain-count">[${this._elapsedRounds(effect) ?? "?"}/${max}]</span>`;
+				return `<li>${this._escapeHtml(effect.name)}${this._escapeHtml(on)}${counter}</li>`;
+			})
+			.join("");
+		// One Sustain button per distinct spell (multiple targets / save-degree
+		// variants of the same spell share a button). Tracker-only: the system
+		// has no Sustain game logic, so the button just logs a 1-action entry.
+		const groups = new Map();
+		for (const { effect } of entries) {
+			const spell = this._spellNameFromEffect(effect.name) ?? effect.name;
+			if (!groups.has(spell)) groups.set(spell, { name: spell, img: effect.img ?? null });
+		}
+		const spells = [...groups.values()];
+		const buttons = spells
+			.map((spell, i) => {
+				const label = Manager.localize("sustain.sustainButton", { spell: spell.name });
+				return `<button type="button" data-vibe-sustain="${i}" data-tooltip="${this._escapeHtml(
+					label
+				)}"><i class="fa-solid fa-hand-holding"></i> ${this._escapeHtml(label)}</button>`;
 			})
 			.join("");
 		const content = `<div class="vibe-sustain-reminder"><p><i class="fa-solid fa-hand-holding"></i> ${Manager.localize(
 			"sustain.reminder",
 			{ caster: actor.name }
-		)}</p><ul>${items}</ul></div>`;
-		ChatMessage.create({ content, speaker: { alias: "PF2e VibeModuleRP" } }).catch((error) =>
+		)}</p><ul>${items}</ul><div class="vibe-sustain-buttons">${buttons}</div></div>`;
+		ChatMessage.create({
+			content,
+			speaker: { alias: "PF2e VibeModuleRP" },
+			flags: { [Manager.id]: { sustain: { casterUuid: actor.uuid, spells } } }
+		}).catch((error) =>
 			console.warn(`${Manager.id} | could not post the sustain reminder`, error)
 		);
+	}
+
+	/** Minimal HTML escape for spell names interpolated into the reminder card. */
+	static _escapeHtml(value) {
+		return String(value ?? "")
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;")
+			.replace(/'/g, "&#39;");
+	}
+
+	/**
+	 * Attach Sustain-button handlers on our own reminder messages. The spell
+	 * list comes from message flags (reload-safe); only the GM and owners of
+	 * the caster actor may click, and each button disables after one click so
+	 * a spell can't be double-counted in the same turn.
+	 */
+	static _onRenderChatMessage(message, html) {
+		try {
+			const data = message?.getFlag?.(Manager.id, "sustain") ?? null;
+			if (!data?.casterUuid || !Array.isArray(data.spells) || !data.spells.length) return;
+			const root = html instanceof HTMLElement ? html : html?.[0] ?? html;
+			const buttons = root?.querySelectorAll?.("[data-vibe-sustain]") ?? [];
+			if (!buttons.length) return;
+			const caster = fromUuidSync(data.casterUuid) ?? null;
+			const usable = !!caster && (game.user.isGM || !!caster.isOwner);
+			for (const btn of buttons) {
+				if (btn.dataset.vibeSustainBound) continue;
+				btn.dataset.vibeSustainBound = "1";
+				if (!usable) {
+					btn.disabled = true;
+					continue;
+				}
+				btn.addEventListener("click", async (event) => {
+					event.preventDefault();
+					if (btn.disabled) return;
+					const spell = data.spells[Number(btn.dataset.vibeSustain)] ?? null;
+					if (!spell?.name) return;
+					const tracker = ActionTrackerTool._state ?? {};
+					if (!tracker.active || tracker.disabled) {
+						ui.notifications.warn(Manager.localize("sustain.warnNoTracker"));
+						return;
+					}
+					const activeUuid = game.combat?.combatant?.actor?.uuid ?? null;
+					if (activeUuid !== data.casterUuid) {
+						const name = caster?.name ?? data.casterUuid;
+						ui.notifications.warn(Manager.localize("sustain.warnNotTurn", { caster: name }));
+						return;
+					}
+					if (!game.user.isGM && !game.users.some((u) => u.isGM && u.active)) {
+						ui.notifications.warn(Manager.localize("sustain.warnNoGm"));
+						return;
+					}
+					const label = Manager.localize("sustain.sustainEntry", { spell: spell.name });
+					await ActionTrackerTool.logExternal(data.casterUuid, {
+						name: label,
+						cost: 1,
+						icon: spell.img ? { img: spell.img } : { fa: "fa-hand-holding" }
+					});
+					btn.disabled = true;
+					btn.classList.add("vibe-sustained-done");
+				});
+			}
+		} catch (error) {
+			console.warn(`${Manager.id} | sustain button wiring failed`, error);
+		}
 	}
 
 	/* -------------------------------------------- */
@@ -156,18 +306,73 @@ export class SustainReminderTool {
 	 * created. Runs on the creating client (post-create update; the flag
 	 * survives reloads because actor items live in the world DB). The originals
 	 * stay untouched.
+	 *
+	 * The same update also stamps the combat round the effect started in
+	 * (`sustainStart` flag) so the reminder can show an [elapsed/max] duration
+	 * counter. Stamping is independent of the `patchEffects` setting and only
+	 * happens while a combat is running - otherwise the start is unknown.
 	 */
 	static async _onCreateItem(item, data, options, userId) {
-		if (!Manager.setting(this.id, "patchEffects")) return;
 		if (userId && userId !== game.user.id) return;
 		if (item.type !== "effect") return;
-		if (item.system?.duration?.sustained) return;
 		const spellName = this._spellNameFromEffect(item.name);
 		if (!spellName) return;
-		const sustained = this._extraSpellNames().includes(spellName)
-			? true
-			: await this._lookupSpellSustained(spellName);
-		if (sustained) await this._setSustained(item);
+		let sustained = !!item.system?.duration?.sustained;
+		if (!sustained) {
+			if (!Manager.setting(this.id, "patchEffects")) return;
+			sustained = this._extraSpellNames().includes(spellName)
+				? true
+				: await this._lookupSpellSustained(spellName);
+			if (!sustained) return;
+		}
+		const update = {};
+		if (!item.system?.duration?.sustained) update["system.duration.sustained"] = true;
+		const stamp = this._startStamp();
+		if (stamp && !item.getFlag?.(Manager.id, "sustainStart")) {
+			update[`flags.${Manager.id}.sustainStart`] = stamp;
+		}
+		if (!Object.keys(update).length) return;
+		try {
+			await item.update(update);
+		} catch (error) {
+			console.warn(`${Manager.id} | could not patch "${item.name}"`, error);
+		}
+	}
+
+	/** Combat round an effect started in, or null when no combat is running. */
+	static _startStamp() {
+		const combat = game.combat;
+		if (!combat?.started || !Number.isFinite(combat.round)) return null;
+		return { combatId: combat.id ?? null, round: combat.round };
+	}
+
+	/**
+	 * Max duration of an effect in rounds (1 minute = 10 rounds), or null when
+	 * the duration is not a plain number (unlimited, encounter, ...).
+	 */
+	static _maxRounds(effect) {
+		const duration = effect.system?.duration ?? {};
+		const value = Number(duration.value);
+		if (!Number.isFinite(value) || value <= 0) return null;
+		const factor = { rounds: 1, minutes: 10, hours: 600, days: 14400 }[
+			String(duration.unit ?? "").toLowerCase()
+		];
+		if (!factor) return null;
+		return value * factor;
+	}
+
+	/**
+	 * Combat rounds elapsed since the effect started (1 on the casting round),
+	 * or null when the start is unknown (unstamped effect, out-of-combat cast,
+	 * or a different combat).
+	 */
+	static _elapsedRounds(effect) {
+		const stamp = effect.getFlag?.(Manager.id, "sustainStart") ?? null;
+		const combat = game.combat;
+		if (!stamp || !combat?.started) return null;
+		if (stamp.combatId && stamp.combatId !== combat.id) return null;
+		if (!Number.isFinite(stamp.round)) return null;
+		return Math.max(1, combat.round - stamp.round + 1);
 	}
 
 	/**
@@ -208,14 +413,6 @@ export class SustainReminderTool {
 		}
 		if (definitive) this._spellCache.set(spellName, sustained);
 		return sustained;
-	}
-
-	static async _setSustained(item) {
-		try {
-			await item.update({ "system.duration.sustained": true });
-		} catch (error) {
-			console.warn(`${Manager.id} | could not patch the Sustained flag on "${item.name}"`, error);
-		}
 	}
 
 	/** Parse the comma-separated `extraSpells` setting into a list of names. */

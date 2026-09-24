@@ -27,7 +27,12 @@
     "sustain": {
       "reminder": "{caster} - remember to Sustain:",
       "on": "(on {target})",
-      "badgeTooltip": "Has active sustained spells to maintain"
+      "badgeTooltip": "Has active sustained spells to maintain",
+      "sustainButton": "Sustain: {spell}",
+      "sustainEntry": "Sustain: {spell}",
+      "warnNoTracker": "The Action Tracker is not tracking a turn right now, so Sustain was not logged.",
+      "warnNotTurn": "Sustain can only be logged on the caster's turn - {caster} is not the active combatant.",
+      "warnNoGm": "No GM is connected, so Sustain could not be logged."
     },
     "actionTracker": {
       "title": "Action Tracker",
@@ -151,6 +156,26 @@
       "toggleInvisibility": "Toggle Invisibility",
       "noFeatures": "No enabled features are available."
     },
+    "quickActions": {
+      "title": "Quick Actions",
+      "keybindName": "Open the Quick Actions window",
+      "keybindHint": "Reopens the Quick Actions browser window if it was closed (default: Ctrl+Alt+Q).",
+      "searchPlaceholder": "Search Text",
+      "clearFilters": "Clear All Filters",
+      "typeLabel": "Type",
+      "filterMacro": "Macro",
+      "filterAction": "Action",
+      "kindMacro": "Macro",
+      "kindAction": "Action",
+      "empty": "No quick actions configured.",
+      "noResults": "No matching entries found.",
+      "hint": "Click an entry to use it. Drag any entry onto your hotbar to keep it there.",
+      "useTip": "Use this entry",
+      "missingTip": "Source not found (macro or compendium missing)",
+      "notifyNotFound": "Quick Actions: \"{name}\" could not be found (macro or compendium missing).",
+      "notifyFailed": "Quick Actions: could not use \"{name}\". Check the console (F12) for details.",
+      "notifyNoSystemAction": "Quick Actions: the system's Demoralize action is not available."
+    },
     "effectAutomator": {
       "title": "Effect Automator",
       "rulesLabel": "Rules",
@@ -191,7 +216,10 @@
       "needSource": "Pick a source effect first.",
       "pickSource": "Choose the source effect",
       "pickOutcome": "Choose an outcome effect",
-      "searchPlaceholder": "Search effects..."
+      "searchPlaceholder": "Search effects...",
+      "incapNoteRaised": "Incapacitation: raised from {from}.",
+      "incapNoteApplies": "Incapacitation applies to this save.",
+      "incapNoteDetail": "(Target level {target} vs spell rank {rank}.)"
     },
     "rollCounter": {
       "title": "Roll Counter",
@@ -214,6 +242,65 @@
       "clearConfirm": "This will permanently delete {count} recorded roll(s) from every category and player. This cannot be undone.",
       "keybindName": "Open the Roll Counter window",
       "keybindHint": "Reopens the Roll Counter window if it was closed (default: F8). Counts every active die result by the player who rolled it: d20 rolls are split into all rolls, rolls outside combat, and rolls during combat, and every other roll (weapon damage dice, etc.) is shown in the Non-D20 tab on the same 1-20 axis."
+    },
+    "rangerHub": {
+      "title": "Ranger Hub",
+      "keybindName": "Open the Ranger Hub window",
+      "keybindHint": "Reopens the Ranger Hub window if it was closed (default: Ctrl+Alt+C). Requires a single Ranger-character token to be controlled.",
+      "mounted": "Animal Companion mounted",
+      "mountSpeed": "Companion Speed",
+      "feet": "ft",
+      "baseLabel": "Base",
+      "currentLabel": "Current",
+      "flurryButton": "Flurry",
+      "ammoLabel": "Ammunition",
+      "activateButton": "Activate",
+      "activatedEntry": "Activate {name}",
+      "arrowsLabel": "Arrows",
+      "shotLabel": "Fired",
+      "pctLabel": "Recover %",
+      "recoverButton": "Recover Arrows",
+      "recoveredButton": "Already Recovered",
+      "recoveredLine": "Recovered {n} {name}",
+      "gateNone": "Control a single token to use the Ranger Hub.",
+      "gateNotCharacter": "\"{name}\" is not a player character.",
+      "gateNotRanger": "\"{name}\" has no Ranger class — select your Ranger.",
+      "gateNoOwner": "You do not own \"{name}\".",
+      "notify": {
+        "failed": "Ranger Hub: could not update Speed for {name}. Check the console (F12) for details.",
+        "noAmmo": "Ranger Hub: no ammunition selected — pick an arrow first.",
+        "noTrackAmmo": "Ranger Hub: pick the arrows to track first.",
+        "recovered": "Ranger Hub: recovered {n} {name}.",
+        "recoverFailed": "Ranger Hub: could not recover arrows for {name}. Check the console (F12) for details."
+      }
+    },
+    "rangerFlurry": {
+      "title": "Flurry",
+      "ammoFirst": "First shot ammo",
+      "ammoSecond": "Second shot ammo",
+      "shoot": "Shoot",
+      "windowHint": "Two Strikes against your hunted prey (Hunted Shot, flourish: once per turn). One ammo is consumed per shot.",
+      "summaryTitle": "Flurry — Summary",
+      "notify": {
+        "disabled": "Ranger Flurry is disabled in module settings.",
+        "noTarget": "Target exactly one creature for Flurry.",
+        "selfTarget": "Flurry cannot target the ranger.",
+        "noFeat": "Only rangers with the Hunted Shot feat can use Flurry.",
+        "noHuntPrey": "Designate your prey with Hunt Prey first.",
+        "notMarked": "\"{name}\" is not your hunted prey.",
+        "flourish": "Flurry can be used only once per turn (flourish).",
+        "noBow": "No equipped ranged weapon with reload 0 found.",
+        "noAmmo": "Selected ammo is missing or out of quantity.",
+        "shotFailed": "Shot {n} could not be rolled.",
+        "noGm": "No GM is connected, so Immobilized could not be applied.",
+        "failed": "Flurry failed for {name}. Check the console (F12) for details."
+      }
+    },
+    "rangerHuntPrey": {
+      "notify": {
+        "noGm": "Ranger Hunt Prey: no GM is connected, so the prey marker could not be placed on {name}.",
+        "failed": "Ranger Hunt Prey: could not place the prey marker on {name}. Check the console (F12) for details."
+      }
     },
     "shieldedArm": {
       "notify": {
@@ -274,12 +361,14 @@
         "clear-turn-targets": "Clear Targets settings",
         "area-effects": "Area Effects settings",
         "feature-hub": "Feature Hub settings",
+        "quick-actions": "Quick Actions settings",
         "effect-automator": "Effect Automator settings",
         "frightened-decay": "Frightened Decay settings",
         "dying-automation": "Dying Automation settings",
         "light-tether": "Light Tether settings",
         "flanking-offguard": "Flanking settings",
-        "monk-flurry": "Monk Flurry settings",
+          "monk-flurry": "Monk Flurry settings",
+          "ranger-hub": "Ranger Hub settings",
         "fixes": "Fixes",
         "instant-hidden-rolls": "Dice So Nice Tweaks",
         "calendaria-combat-clock": "Calendaria changes"
@@ -324,6 +413,12 @@
           "hint": "Adds a Hub window (toolbar button or Ctrl+Alt+H) that lists the module's enabled features as buttons, so you can see what is available and open any of them in one click."
         }
       },
+      "quick-actions": {
+        "enabled": {
+          "name": "Enable Quick Actions",
+          "hint": "Adds a Quick Actions browser window (Feature Hub button or Ctrl+Alt+Q) listing frequently used macros and actions with search and Macro/Action filters. Entries are clickable to use and draggable onto the hotbar; the list is edited via the module's data/quick-actions.json file."
+        }
+      },
       "effect-automator": {
         "enabled": {
           "name": "Enable Effect Automator",
@@ -362,6 +457,24 @@
           "hint": "Internal: the persisted log of every counted roll. Written by the GM's client and restored on reload."
         }
       },
+      "ranger-hub": {
+        "enabled": {
+          "name": "Enable Ranger Hub",
+          "hint": "Adds a Ranger Hub window (Feature Hub button or Ctrl+Alt+C) with quality-of-life tools for Ranger characters. The window only works while a single Ranger-character token you own is controlled. Holds the 'Animal Companion mounted' Speed row and the Flurry (Hunted Shot) button."
+        }
+      },
+      "ranger-flurry": {
+        "enabled": {
+          "name": "Enable Ranger Flurry",
+          "hint": "Adds a Flurry button to the Ranger Hub that opens a two-shot Hunted Shot window (ammo per shot + Shoot). Validates ranger, target, feat and marked prey, rolls both Strikes with MAP, combines damage on double hits, auto-handles Gravity Weapon on the first landed hit, and applies Immobilized on crits against the hunted prey (Weapon Expertise). Flourish: once per turn."
+        }
+      },
+      "ranger-hunt-prey": {
+        "enabled": {
+          "name": "Enable Ranger Hunt Prey Markers",
+          "hint": "When a ranger designates prey with Hunt Prey, older designations on the same ranger are removed (one prey at a time), the prey gains a visible grayscale 'Hunted Prey (marked by ...)' effect, and the designation is removed automatically when the prey truly dies (Dead status). The marker is removed whenever the ranger's Hunt Prey effect ends."
+        }
+      },
       "sustain-reminder": {
         "enabled": {
           "name": "Enable Sustain Reminder",
@@ -378,6 +491,10 @@
         "patchEffects": {
           "name": "Auto-enable Sustained Flag on Applied Effects",
           "hint": "When an effect for a sustained spell is applied to any actor (dragged from chat or a compendium, or auto-applied), sets the effect's 'Sustained' flag automatically so the reminder can detect it. The system's own effect items (such as Spell Effect: Leaden Steps) are missing this flag; this patches the copies without touching the locked originals."
+        },
+        "removeFromDead": {
+          "name": "Remove Sustained Effects from Dead Targets",
+          "hint": "When a creature truly dies (Dead status), the GM immediately deletes every sustained spell effect on it, so spells stop lingering on corpses. Effects that somehow survive are still hidden from the chat reminder and the tracker badge."
         },
         "extraSpells": {
           "name": "Extra Sustained Spell Names",

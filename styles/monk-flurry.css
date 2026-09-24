@@ -21,3 +21,10 @@
   cursor: pointer;
 }
 .monk-flurry-apply:hover { filter: brightness(1.15); }
+/* Combined + Trip crit damage cards: same solid light-blue background + pink outline so they're easy to spot in a flooded chat. */
+.chat-message.monk-flurry-combined,
+.chat-message.monk-flurry-trip-crit {
+  background: #cfe8ff;
+  outline: 2px solid #ff4fd8;
+  outline-offset: -2px;
+}

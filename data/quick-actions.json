@@ -1,0 +1,22 @@
+{
+  "_help": "Editable Quick Actions config for the module's Quick Actions browser window (Feature Hub button or Ctrl+Alt+Q). HOW TO ADD AN ENTRY: copy one of the objects below into the entries array, change its fields per the reference, save the file, then reload the world (edits require a world reload — the file is fetched once at ready() and cached). No code changes needed. FIELD REFERENCE — every entry: id (unique string used for drag/click wiring; must be unique in this file), kind (macro | action — controls the filter checkbox it appears under, the kind badge, and the drag payload type), name (display fallback; replaced by the live document's name once resolved), img (display fallback icon; replaced by the live document's img once resolved), uuid (full compendium UUID fallback, e.g. Compendium.<pack>.Macro.<id> — also the drag payload when nothing resolved). Macro entries ONLY: worldMacroId (a world Macro _id checked FIRST via game.macros.get — use this for your own imported macro copies), pack (full compendium code, e.g. xdy-pf2e-workbench.asymonous-benefactor-macros — checked SECOND by exact entry name), entryName (exact compendium macro name for the pack lookup — prefer this over uuid because Workbench updates rotate macro _ids). Action entries ONLY: uuid (system action Item UUID — click runs game.pf2e.actions.<slug>, drag drops the Item). RESOLUTION ORDER (macro): worldMacroId → pack+entryName → uuid; first hit wins, live name/img come from the document. UNRESOLVED entries render dimmed/disabled with a tooltip instead of breaking the window. BEHAVIOR: click a macro row = execute it (compendium macros run via an ephemeral owned copy when needed); click Demoralize = system demoralize check with roll dialogs hidden (shift-click forces the dialog); drag any row onto the hotbar = core drop handling (macros are copied into the world on drop; Items become sheet-toggle macros — that is core behavior, same as dragging from a compendium).",
+  "entries": [
+    {
+      "id": "treat-wounds-battle-medicine",
+      "kind": "macro",
+      "name": "Treat Wounds and Battle Medicine",
+      "worldMacroId": "Dmwlp47393HlG6Ci",
+      "pack": "xdy-pf2e-workbench.asymonous-benefactor-macros",
+      "entryName": "Treat Wounds and Battle Medicine",
+      "uuid": "Compendium.xdy-pf2e-workbench.asymonous-benefactor-macros.Macro.uI6B58l6g0ZnlUY6",
+      "img": "systems/pf2e/icons/conditions/wounded.webp"
+    },
+    {
+      "id": "demoralize",
+      "kind": "action",
+      "name": "Demoralize",
+      "uuid": "Compendium.pf2e.actionspf2e.Item.2u915NdUyQan6uKF",
+      "img": "icons/skills/social/intimidation-impressing.webp"
+    }
+  ]
+}

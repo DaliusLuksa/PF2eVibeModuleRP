@@ -1,7 +1,7 @@
 {
   "id": "pf2e-vibemodulerp",
   "title": "PF2e VibeModuleRP",
-  "version": "1.29.6",
+  "version": "1.33.0",
   "compatibility": {
     "minimum": "12",
     "verified": "14.365"
@@ -74,7 +74,10 @@
     "styles/area-effects.css",
     "styles/feature-hub.css",
     "styles/effect-automator.css",
-    "styles/monk-flurry.css"
+    "styles/monk-flurry.css",
+    "styles/ranger-hub.css",
+    "styles/ranger-flurry.css",
+    "styles/quick-actions.css"
   ],
   "languages": [
     {

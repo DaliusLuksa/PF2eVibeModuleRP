@@ -1,0 +1,69 @@
+/* Ranger Flurry window */
+.vibe-ranger-flurry {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: var(--font-size-13);
+}
+
+.rf-line {
+  margin: 0;
+  font-weight: bold;
+}
+
+/* First/second ammo on a single row (Area Effects style). */
+.rf-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.rf-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.rf-field > label {
+  font-weight: bold;
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+}
+
+.rf-field select {
+  width: 100%;
+}
+
+.rf-hint {
+  margin: 0;
+  color: var(--color-text-light-6);
+  font-size: var(--font-size-12);
+  font-style: italic;
+}
+
+.rf-shoot {
+  margin-top: 0.2rem;
+  padding: 0.3rem 0.6rem;
+  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.rf-gate {
+  margin: 0.25rem 0;
+  color: var(--color-text-light-6);
+  font-style: italic;
+}
+
+/* Text-only summary card (native damage cards carry the Apply buttons). */
+.rf-summary ul {
+  margin: 0.2rem 0;
+  padding-left: 1.1rem;
+}
