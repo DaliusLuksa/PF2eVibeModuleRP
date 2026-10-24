@@ -439,7 +439,7 @@ export class RangerFlurryTool {
 			// Combined damage card whenever at least one shot landed (Flurry of
 			// Blows always shows it — players read this card, not the natives).
 			if (d1?.roll || d2?.roll) {
-				await this._postCombinedDamage(attacker, attackerToken, targetActor, targetToken, d1?.roll ?? null, d2?.roll ?? null, weaponItem);
+				await this._postCombinedDamage(attacker, attackerToken, targetActor, targetToken, d1?.roll ?? null, d2?.roll ?? null, weaponItem, [d1?.msg ?? null, d2?.msg ?? null]);
 			}
 			// Weapon Expertise: crit vs marked prey immobilizes (once).
 			let immobilized = false;
@@ -601,7 +601,62 @@ export class RangerFlurryTool {
 	/*  Chat cards                                  */
 	/* -------------------------------------------- */
 
-	static async _postCombinedDamage(attacker, attackerToken, targetActor, targetToken, roll1, roll2, weaponItem) {
+	/**
+	 * Combined card tag row with the system's own recipe
+	 * (DamagePF2e.roll): action traits | weapon traits (minus materials) |
+	 * range | material tags | conditional ghost-touch. Mirrors
+	 * MonkFlurryTool._combinedTagRow, plus the range tag bows need
+	 * (replicated exactly from createActionRangeLabel).
+	 */
+	static _combinedTagRow(weaponItem, entries, mergedOptions, actionTraits) {
+		try {
+			const cfg = CONFIG?.PF2E ?? {};
+			const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+			const labelOf = (slug, dicts) => {
+				for (const d of dicts) {
+					const v = d?.[slug];
+					if (typeof v === "string") {
+						try { return game.i18n.localize(v); } catch { return v; }
+					}
+				}
+				return slug;
+			};
+			const tag = (slug, label, cls, attr) => `<span class="tag${cls ? ` ${cls}` : ""}"${cfg.traitsDescriptions?.[slug] ? ` data-tooltip="${cfg.traitsDescriptions[slug]}"` : ""} data-${attr}="${esc(slug)}">${esc(label)}</span>`;
+			const materialKeys = new Set(Object.keys(cfg.materialDamageEffects ?? {}));
+			const weaponTraits = weaponItem?.system?.traits?.value ?? [];
+			const actionTags = (actionTraits?.length ? actionTraits : ["attack"])
+				.map((t) => tag(t, labelOf(t, [cfg.actionTraits]), null, "trait")).join("");
+			const traitTags = weaponTraits
+				.filter((t) => !materialKeys.has(t))
+				.map((t) => tag(t, labelOf(t, [cfg.npcAttackTraits, cfg.weaponTraits, cfg.actionTraits]), "tag_alt", "trait")).join("");
+			let rangeTag = "";
+			try {
+				const r = weaponItem?.range ?? weaponItem?.system?.range ?? null;
+				if (r?.max) {
+					const slug = r.increment ? `range-increment-${r.increment}` : `range-${r.max}`;
+					const key = r.increment ? "PF2E.Action.Range.IncrementN" : "PF2E.Action.Range.MaxN";
+					let label = slug;
+					try { label = game.i18n.format(key, { n: r.increment ?? r.max }); } catch { label = slug; }
+					rangeTag = `<span class="tag tag_secondary" data-tooltip="PF2E.Item.Weapon.RangeIncrementN.Hint" data-slug="${esc(slug)}">${esc(label)}</span>`;
+				}
+			} catch {}
+			const materials = [...new Set((entries ?? []).flatMap((e) => e.materials ?? []))];
+			const materialTags = materials
+				.map((m) => tag(m, labelOf(m, [cfg.preciousMaterials]), "tag_material", "material")).join("");
+			// Ghost touch only shows when it matters (native condition).
+			const opts = new Set(mergedOptions ?? []);
+			const ghosted = (opts.has("item:rune:property:ghost-touch") || opts.has("item:rune:property:astral") || opts.has("item:rune:property:greater-astral"))
+				&& opts.has("target:trait:incorporeal");
+			const ghostTag = ghosted ? `<span class="tag ghost-touch" data-tooltip="PF2E.WeaponPropertyRune.ghostTouch.Note" data-slug="ghost-touch">${esc(labelOf("ghost-touch", [{ "ghost-touch": "PF2E.WeaponPropertyRune.ghostTouch.Name" }]))}</span>` : "";
+			const body = [traitTags, rangeTag, materialTags, ghostTag].filter(Boolean).join("");
+			return `<div class="tags" data-tooltip-class="pf2e">${actionTags}${body ? `<hr class="vr">${body}` : ""}</div>`;
+		} catch (e) {
+			console.warn(`${Manager.id} | combined tag row failed, using fallback`, e);
+			return `<div class="tags" data-tooltip-class="pf2e"><span class="tag" data-tooltip="PF2E.TraitDescriptionAttack" data-trait="attack">Attack</span><hr class="vr"><span class="tag tag_alt" data-tooltip="PF2E.TraitDescriptionRanged" data-trait="ranged">Ranged</span></div>`;
+		}
+	}
+
+	static async _postCombinedDamage(attacker, attackerToken, targetActor, targetToken, roll1, roll2, weaponItem, nativeMessages = []) {
 		try {
 			const byType = new Map();
 			for (const roll of [roll1, roll2]) {
@@ -645,10 +700,75 @@ export class RangerFlurryTool {
 			} catch {
 				roll = await new Roll(`${combinedTotal}`).evaluate();
 			}
+		// Harvest the native per-shot cards' full pf2e flags (shot 1 as the
+			// template, shot 2 merged in): options/domains/traits/origin/strike
+			// carry everything item-derived (ammo damage, runes, Gravity bonus
+			// options...) so IWR evaluates the combined total exactly like the
+			// natives. Same harvest rule as MonkFlurryTool.
+			const nativePf2e = (nativeMessages ?? []).map((m) => m?.flags?.pf2e).filter((f) => f && typeof f === "object");
+			const nativeContexts = nativePf2e.map((f) => f.context).filter((c) => c && typeof c === "object");
+			const unionSorted = (lists) => [...new Set(lists.flat())].sort();
+			let context = null;
+			const pf2eExtra = {};
+			if (nativeContexts.length) {
+				const base = foundry.utils.deepClone(nativeContexts[0]);
+				const mergedOptions = unionSorted(nativeContexts.map((c) => [...(c.options ?? [])]));
+				// Per-shot outcomes describe the individual shots, not the
+				// combined total: normalize to the combined card's declared outcome.
+				const normalized = mergedOptions.filter((o) => !String(o).startsWith("check:outcome:"));
+				normalized.push("check:outcome:success");
+				if (!normalized.includes("hunted-shot")) normalized.push("hunted-shot");
+				const mergedDomains = unionSorted([...nativeContexts.map((c) => [...(c.domains ?? [])]), ["ranger-flurry-damage"]]);
+				const mergedTraits = unionSorted(nativeContexts.map((c) => [...(c.traits ?? [])]));
+				const seenNotes = new Set();
+				const mergedNotes = nativeContexts.flatMap((c) => c.notes ?? []).filter((n) => {
+					const k = JSON.stringify(n);
+					if (seenNotes.has(k)) return false;
+					seenNotes.add(k);
+					return true;
+				});
+				context = {
+					...base,
+					type: "damage-roll",
+					sourceType: "attack",
+					actor: attacker.id,
+					token: attackerToken.id ?? null,
+					target: base.target ?? { actor: targetActor.uuid, token: targetToken.uuid },
+					domains: mergedDomains,
+					options: normalized.sort(),
+					contextualOptions: base.contextualOptions ?? {},
+					traits: mergedTraits,
+					notes: mergedNotes,
+					outcome: "success",
+					unadjustedOutcome: null,
+					secret: base.secret ?? false,
+				};
+				const first = nativePf2e[0];
+				pf2eExtra.origin = first.origin ? foundry.utils.deepClone(first.origin) : { actor: attacker.uuid, type: "weapon" };
+				if (first.strike) pf2eExtra.strike = foundry.utils.deepClone(first.strike);
+				pf2eExtra.modifiers = foundry.utils.deepClone(first.modifiers ?? []);
+				pf2eExtra.dice = foundry.utils.deepClone(first.dice ?? []);
+				if (first.target) pf2eExtra.target = foundry.utils.deepClone(first.target);
+			} else {
+				// No native cards: previous hardcoded shape.
+				context = {
+					type: "damage-roll",
+					sourceType: "attack",
+					actor: attacker.id,
+					token: attackerToken.id ?? null,
+					target: { actor: targetActor.id, token: targetToken.id },
+					domains: ["ranger-flurry-damage", "strike-damage", "damage"],
+					options: ["attack", "damage", "hunted-shot"],
+					outcome: "success",
+					notes: [],
+					secret: false
+				};
+				pf2eExtra.origin = { actor: attacker.uuid, type: "weapon" };
+			}
+			const tagRow = this._combinedTagRow(weaponItem, entries, context.options, context.traits);
 			const flavor =
 				`<h4 class="action"><strong>Damage Roll: Flurry (Combined)</strong> <span class="subtitle degree-of-success">(<span class="success">Hit</span>)</span></h4>` +
-				`<div class="tags" data-tooltip-class="pf2e"><span class="tag" data-tooltip="PF2E.TraitDescriptionAttack" data-trait="attack">Attack</span>` +
-				`<hr class="vr"><span class="tag tag_alt" data-tooltip="PF2E.TraitDescriptionRanged">Ranged</span></div><hr>` +
+				tagRow + `<hr>` +
 				`<div class="tags modifiers"><span class="tag tag_transparent" data-visibility="gm">${breakdown}</span>` +
 				`<span class="tag tag_transparent" data-visibility="gm">${weaponItem?.name ?? "Bow"}</span></div>`;
 			await ChatMessage.create({
@@ -658,19 +778,8 @@ export class RangerFlurryTool {
 				rolls: [roll],
 				flags: {
 					pf2e: {
-						context: {
-							type: "damage-roll",
-							sourceType: "attack",
-							actor: attacker.id,
-							token: attackerToken.id ?? null,
-							target: { actor: targetActor.id, token: targetToken.id },
-							domains: ["ranger-flurry-damage", "strike-damage", "damage"],
-							options: ["attack", "damage", "hunted-shot"],
-							outcome: "success",
-							notes: [],
-							secret: false
-						},
-						origin: { actor: attacker.uuid, type: "weapon" }
+						...pf2eExtra,
+						context,
 					},
 					[Manager.id]: { rangerFlurryCombined: true }
 				}

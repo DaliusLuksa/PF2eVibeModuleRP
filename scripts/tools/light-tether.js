@@ -13,10 +13,18 @@ const DEBOUNCE_MS = 50;
  *
  * - Light only (not a generic tether system).
  * - Uses the spell's actual range.value ("120 feet") with a 120 ft fallback.
- * - Checks when either the caster or the target moves (updateToken on GM).
+ * - Checks when either the caster or the target moves (updateToken on the
+ *   active GM), plus canvas refreshes (refreshToken) so removal lands
+ *   while the token is visibly moving instead of on the next commit.
+ *   Position commits always arrive via updateToken; refreshToken only
+ *   re-runs the same registry-scoped check.
  * - Skips if either side has no token on the same scene.
  * - GM is the single writer: deletes the effect and posts a chat message:
  *   "Light on X expired — moved beyond 120 ft from Y"
+ * - Idle is cost-free: a registry of live Light effects (seeded once at
+ *   ready, kept via createItem/deleteItem/deleteActor) gates everything —
+ *   with zero lights tracked, move handling returns after one Map-size
+ *   check and never walks scenes, actors, or items.
  */
 export class LightTetherTool {
 	static id = "light-tether";
@@ -36,10 +44,100 @@ export class LightTetherTool {
 	/** Effect ids currently being deleted (avoid double-delete). */
 	static _deleting = new Set();
 
+	/** Registry of live Light effects: effectUuid -> { actorId, effectId }. */
+	static _tracked = new Map();
+
 	static ready() {
-		this._loadRange().catch((e) => console.warn(`${Manager.id} | light-tether could not load range`, e));
+		if (game.user.isGM) this._seedRegistry();
 		Hooks.on("updateToken", this._onUpdateToken.bind(this));
 		Hooks.on("refreshToken", this._onRefreshToken.bind(this));
+		Hooks.on("createItem", this._onCreateItem.bind(this));
+		Hooks.on("deleteItem", this._onDeleteItem.bind(this));
+		Hooks.on("deleteActor", this._onDeleteActor.bind(this));
+	}
+
+	/* -------------------------------------------- */
+	/*  Registry — what makes idle cost-free        */
+	/* -------------------------------------------- */
+
+	/** One-time seed: pick up Light effects already present at load. */
+	static _seedRegistry() {
+		try {
+			for (const actor of game.actors ?? []) {
+				try {
+					for (const item of actor.items ?? []) {
+						if (item?.type === "effect" && this._isLightEffect(item) && item.uuid) {
+							this._tracked.set(item.uuid, { actorId: actor.id, effectId: item.id });
+						}
+					}
+				} catch { continue; }
+			}
+		} catch (e) {
+			console.warn(`${Manager.id} | light-tether registry seed failed`, e);
+		}
+	}
+
+	static _onCreateItem(item, _options, _userId) {
+		if (!game.user.isGM) return;
+		try {
+			if (item?.type !== "effect" || !this._isLightEffect(item)) return;
+			const actor = item.parent;
+			if (!actor?.id || !item.uuid) return;
+			this._tracked.set(item.uuid, { actorId: actor.id, effectId: item.id });
+		} catch { /* never break item creation */ }
+	}
+
+	static _onDeleteItem(item, _options, _userId) {
+		if (!game.user.isGM) return;
+		try {
+			if (item?.uuid) this._tracked.delete(item.uuid);
+			// Fallback: purge by effect id in case the uuid form differs.
+			if (item?.id) {
+				for (const [key, ref] of this._tracked) {
+					if (ref.effectId === item.id) this._tracked.delete(key);
+				}
+			}
+		} catch { /* never break item deletion */ }
+	}
+
+	static _onDeleteActor(actor, _options, _userId) {
+		if (!game.user.isGM) return;
+		try {
+			if (!actor?.id) return;
+			for (const [key, ref] of this._tracked) {
+				if (ref.actorId === actor.id) this._tracked.delete(key);
+			}
+		} catch { /* never break actor deletion */ }
+	}
+
+	/**
+	 * Registry-scoped candidates for a scene: resolve tracked effects
+	 * directly instead of walking every scene token and world actor.
+	 * Stale entries (actor/effect gone, or no longer a Light effect) are
+	 * dropped on sight — the registry self-heals.
+	 */
+	static _candidatesForScene(scene) {
+		const out = [];
+		for (const [key, ref] of [...this._tracked]) {
+			let actor = null;
+			let effect = null;
+			try {
+				actor = game.actors?.get(ref.actorId) ?? null;
+				effect = actor?.items?.get(ref.effectId) ?? null;
+			} catch {
+				actor = null;
+				effect = null;
+			}
+			if (!actor || !effect || !this._isLightEffect(effect)) {
+				this._tracked.delete(key);
+				continue;
+			}
+			if (effect.system?.expired) continue;
+			const base = actor.baseActor ?? actor;
+			if (!this._tokensForActorOnScene(base, scene).length) continue;
+			out.push({ effect, targetActor: base });
+		}
+		return out;
 	}
 
 	/* -------------------------------------------- */
@@ -97,20 +195,32 @@ export class LightTetherTool {
 		if (!game.user.isActiveGM) return;
 		if (!Manager.isEnabled(this.id)) return;
 		if (changes.x === undefined && changes.y === undefined && changes.elevation === undefined && changes.sort === undefined) return;
+		// Idle is cost-free: no tracked Light effects, no work at all.
+		if (!this._tracked.size) return;
 		const scene = tokenDoc.parent;
 		if (!scene) return;
 		this._pendingScenes.add(scene.id);
 		clearTimeout(this._debounceTimer);
 		this._debounceTimer = setTimeout(() => this._flushPending(), DEBOUNCE_MS);
+		// Single immediate scoped check for the moved token; the debounced
+		// flush above is the backstop for multi-token races.
 		queueMicrotask(() => this._checkMovedToken(tokenDoc, scene).catch((e) =>
 			console.warn(`${Manager.id} | light-tether moved check failed`, e)
 		));
-		if (!this._processing) queueMicrotask(() => this._flushPending());
 	}
 
+	/**
+	 * Canvas-side refreshes (drag-preview frames, slide-animation frames,
+	 * hover/redraws). Position commits always arrive via updateToken; this
+	 * hook only re-runs the registry-scoped check so removal lands while
+	 * the token is visibly moving instead of waiting for the next commit.
+	 * Gated on the registry first, so idle cost is a few guard reads.
+	 */
 	static _onRefreshToken(token) {
 		if (!game.user.isActiveGM) return;
 		if (!Manager.isEnabled(this.id)) return;
+		// Idle is cost-free: no tracked Light effects, no work at all.
+		if (!this._tracked.size) return;
 		if (!canvas?.ready || !canvas?.grid) return;
 		if (this._refreshThrottle) return;
 		this._refreshThrottle = true;
@@ -132,6 +242,10 @@ export class LightTetherTool {
 			return;
 		}
 		await this._loadRange();
+		if (!this._tracked.size) {
+			this._pendingScenes.clear();
+			return;
+		}
 		const scenes = [...this._pendingScenes];
 		this._pendingScenes.clear();
 		if (!scenes.length) return;
@@ -153,7 +267,7 @@ export class LightTetherTool {
 
 	static async _checkScene(scene) {
 		const range = this._range;
-		const candidates = this._collectLightEffectsOnScene(scene);
+		const candidates = this._candidatesForScene(scene);
 		if (!candidates.length) return;
 		for (const { effect, targetActor } of candidates) {
 			if (this._deleting.has(effect.id)) continue;
@@ -179,48 +293,6 @@ export class LightTetherTool {
 				await this._removeEffect(effect, targetActor, caster, range, minDist);
 			}
 		}
-	}
-
-	static _collectLightEffectsOnScene(scene) {
-		const result = [];
-		const seenActors = new Set();
-		const actorsOnScene = new Set();
-
-		// Gather actors referenced by scene tokens (handles both linked and synthetic unlinked)
-		for (const tokDoc of scene.tokens) {
-			const actor = tokDoc.actor;
-			if (!actor) continue;
-			const base = actor.baseActor ?? actor;
-			const key = base.uuid ?? actor.uuid;
-			if (seenActors.has(key)) continue;
-			seenActors.add(key);
-			// Prefer the base world actor for item storage / deletion.
-			actorsOnScene.add(base);
-		}
-		// Also include any world actors that carry the effect but whose token may have been missed
-		// (covers edge where getActiveTokens lag). They will be filtered by token presence later.
-		for (const actor of game.actors) {
-			let hasLight = false;
-			for (const item of actor.items) {
-				if (this._isLightEffect(item)) { hasLight = true; break; }
-			}
-			if (!hasLight) continue;
-			const base = actor.baseActor ?? actor;
-			const key = base.uuid ?? actor.uuid;
-			if (seenActors.has(key)) continue;
-			// Only add if they actually have a token on this scene (otherwise _tokensForActorOnScene will skip)
-			if (!this._tokensForActorOnScene(base, scene).length) continue;
-			seenActors.add(key);
-			actorsOnScene.add(base);
-		}
-		for (const actor of actorsOnScene) {
-			for (const item of actor.items) {
-				if (!this._isLightEffect(item)) continue;
-				if (item.system?.expired) continue;
-				result.push({ effect: item, targetActor: actor.baseActor ?? actor });
-			}
-		}
-		return result;
 	}
 
 	static _isLightEffect(item) {
@@ -288,7 +360,7 @@ export class LightTetherTool {
 		if (!movedActor) return;
 		// Collect candidates where the moved actor is either the light bearer
 		// or the caster — those are the only effects whose distance can change.
-		const candidates = this._collectLightEffectsOnScene(scene).filter(({ effect, targetActor }) => {
+		const candidates = this._candidatesForScene(scene).filter(({ effect, targetActor }) => {
 			const originUuid = effect.system?.context?.origin?.actor;
 			let caster = null;
 			try { const r = originUuid ? fromUuidSync(originUuid) : null; caster = r?.actor ?? r; } catch { caster = null; }
